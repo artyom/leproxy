@@ -31,6 +31,7 @@ func main() {
 		Addr  string `flag:"addr,address to listen at"`
 		Conf  string `flag:"map,file with host/backend mapping"`
 		Cache string `flag:"cache,path to letsencypt cache file"`
+		HSTS  bool   `flag:"hsts,add Strict-Transport-Security header"`
 	}{
 		Addr:  ":https",
 		Conf:  "mapping.yml",
@@ -41,14 +42,14 @@ func main() {
 	if params.Cache == "" {
 		log.Fatal("no cache specified")
 	}
-	srv, err := setupServer(params.Addr, params.Conf, params.Cache)
+	srv, err := setupServer(params.Addr, params.Conf, params.Cache, params.HSTS)
 	if err != nil {
 		log.Fatal(err)
 	}
 	log.Fatal(srv.ListenAndServeTLS("", ""))
 }
 
-func setupServer(addr, mapfile, cachefile string) (*http.Server, error) {
+func setupServer(addr, mapfile, cachefile string, hsts bool) (*http.Server, error) {
 	mapping, err := readMapping(mapfile)
 	if err != nil {
 		return nil, err
@@ -56,6 +57,9 @@ func setupServer(addr, mapfile, cachefile string) (*http.Server, error) {
 	proxy, err := setProxy(mapping)
 	if err != nil {
 		return nil, err
+	}
+	if hsts {
+		proxy = &hstsProxy{proxy}
 	}
 	var m letsencrypt.Manager
 	if err := m.CacheFile(cachefile); err != nil {
@@ -131,6 +135,15 @@ func keys(m map[string]string) []string {
 		out = append(out, k)
 	}
 	return out
+}
+
+type hstsProxy struct {
+	http.Handler
+}
+
+func (p *hstsProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
+	p.Handler.ServeHTTP(w, r)
 }
 
 type bufPool struct{}
