@@ -80,6 +80,7 @@ func setProxy(mapping map[string]string) (http.Handler, error) {
 	}
 	mux := http.NewServeMux()
 	for hostname, backendAddr := range mapping {
+		hostname, backendAddr := hostname, backendAddr // intentional shadowing
 		if strings.ContainsRune(hostname, os.PathSeparator) {
 			return nil, fmt.Errorf("invalid hostname: %q", hostname)
 		}
