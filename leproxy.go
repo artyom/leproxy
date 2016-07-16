@@ -13,6 +13,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httputil"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -91,6 +92,16 @@ func setProxy(mapping map[string]string) (http.Handler, error) {
 				// path specified as directory with explicit trailing
 				// slash; add this path as static site
 				mux.Handle(hostname+"/", http.FileServer(http.Dir(backendAddr)))
+				continue
+			}
+		}
+		if u, err := url.Parse(backendAddr); err == nil {
+			switch u.Scheme {
+			case "http", "https":
+				rp := httputil.NewSingleHostReverseProxy(u)
+				rp.ErrorLog = log.New(ioutil.Discard, "", 0)
+				rp.BufferPool = bufPool{}
+				mux.Handle(hostname+"/", rp)
 				continue
 			}
 		}
