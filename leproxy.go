@@ -33,10 +33,15 @@ func main() {
 		Conf  string `flag:"map,file with host/backend mapping"`
 		Cache string `flag:"cache,path to letsencypt cache file"`
 		HSTS  bool   `flag:"hsts,add Strict-Transport-Security header"`
+
+		RTo time.Duration `flag:"rto,maximum duration before timing out read of the request"`
+		WTo time.Duration `flag:"wto,maximum duration before timing out write of the response"`
 	}{
 		Addr:  ":https",
 		Conf:  "mapping.yml",
 		Cache: "letsencrypt.cache",
+		RTo:   time.Minute,
+		WTo:   5 * time.Minute,
 	}
 	autoflags.Define(&params)
 	flag.Parse()
@@ -46,6 +51,12 @@ func main() {
 	srv, err := setupServer(params.Addr, params.Conf, params.Cache, params.HSTS)
 	if err != nil {
 		log.Fatal(err)
+	}
+	if params.RTo > 0 {
+		srv.ReadTimeout = params.RTo
+	}
+	if params.WTo > 0 {
+		srv.WriteTimeout = params.WTo
 	}
 	log.Fatal(srv.ListenAndServeTLS("", ""))
 }
