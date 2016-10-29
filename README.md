@@ -7,7 +7,7 @@ Install:
 
 Run:
 
-	leproxy -addr :https -map /path/to/mapping.yml -cache /path/to/letsencrypt.cache
+	leproxy -addr :https -map /path/to/mapping.yml -cacheDir /path/to/letsencrypt
 
 `mapping.yml` contains host-to-backend mapping, where backend can be specified as:
 

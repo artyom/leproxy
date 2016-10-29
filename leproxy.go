@@ -20,26 +20,25 @@ import (
 	"sync"
 	"time"
 
-	"rsc.io/letsencrypt"
-
-	"gopkg.in/yaml.v2"
-
 	"github.com/artyom/autoflags"
+	"golang.org/x/crypto/acme/autocert"
+	"gopkg.in/yaml.v2"
 )
 
 func main() {
 	params := struct {
 		Addr  string `flag:"addr,address to listen at"`
 		Conf  string `flag:"map,file with host/backend mapping"`
-		Cache string `flag:"cache,path to letsencypt cache file"`
+		Cache string `flag:"cacheDir,path to directory to cache key and certificates"`
 		HSTS  bool   `flag:"hsts,add Strict-Transport-Security header"`
+		Email string `flag:"email,contact email address presented to letsencrypt CA"`
 
 		RTo time.Duration `flag:"rto,maximum duration before timing out read of the request"`
 		WTo time.Duration `flag:"wto,maximum duration before timing out write of the response"`
 	}{
 		Addr:  ":https",
 		Conf:  "mapping.yml",
-		Cache: "letsencrypt.cache",
+		Cache: "/var/cache/letsencrypt",
 		RTo:   time.Minute,
 		WTo:   5 * time.Minute,
 	}
@@ -48,7 +47,7 @@ func main() {
 	if params.Cache == "" {
 		log.Fatal("no cache specified")
 	}
-	srv, err := setupServer(params.Addr, params.Conf, params.Cache, params.HSTS)
+	srv, err := setupServer(params.Addr, params.Conf, params.Cache, params.Email, params.HSTS)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -61,7 +60,7 @@ func main() {
 	log.Fatal(srv.ListenAndServeTLS("", ""))
 }
 
-func setupServer(addr, mapfile, cachefile string, hsts bool) (*http.Server, error) {
+func setupServer(addr, mapfile, cacheDir, email string, hsts bool) (*http.Server, error) {
 	mapping, err := readMapping(mapfile)
 	if err != nil {
 		return nil, err
@@ -73,11 +72,15 @@ func setupServer(addr, mapfile, cachefile string, hsts bool) (*http.Server, erro
 	if hsts {
 		proxy = &hstsProxy{proxy}
 	}
-	var m letsencrypt.Manager
-	if err := m.CacheFile(cachefile); err != nil {
-		return nil, err
+	if fi, err := os.Stat(cacheDir); err == nil && !fi.IsDir() {
+		return nil, fmt.Errorf("path %q already exists and is not a directory", cacheDir)
 	}
-	m.SetHosts(keys(mapping))
+	m := autocert.Manager{
+		Prompt:     autocert.AcceptTOS,
+		Cache:      autocert.DirCache(cacheDir),
+		HostPolicy: autocert.HostWhitelist(keys(mapping)...),
+		Email:      email,
+	}
 	srv := &http.Server{
 		Handler:   proxy,
 		Addr:      addr,
