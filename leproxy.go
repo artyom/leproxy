@@ -5,7 +5,6 @@ package main
 import (
 	"bytes"
 	"crypto/tls"
-	"flag"
 	"fmt"
 	"io"
 	"io/ioutil"
@@ -42,8 +41,7 @@ func main() {
 		RTo:   time.Minute,
 		WTo:   5 * time.Minute,
 	}
-	autoflags.Define(&params)
-	flag.Parse()
+	autoflags.Parse(&params)
 	if params.Cache == "" {
 		log.Fatal("no cache specified")
 	}
