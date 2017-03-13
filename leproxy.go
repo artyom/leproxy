@@ -110,7 +110,7 @@ func setProxy(mapping map[string]string) (http.Handler, error) {
 		if u, err := url.Parse(backendAddr); err == nil {
 			switch u.Scheme {
 			case "http", "https":
-				rp := httputil.NewSingleHostReverseProxy(u)
+				rp := newSingleHostReverseProxy(u)
 				rp.ErrorLog = log.New(ioutil.Discard, "", 0)
 				rp.BufferPool = bufPool{}
 				mux.Handle(hostname+"/", rp)
@@ -121,6 +121,7 @@ func setProxy(mapping map[string]string) (http.Handler, error) {
 			Director: func(req *http.Request) {
 				req.URL.Scheme = "http"
 				req.URL.Host = req.Host
+				req.Header.Set("X-Forwarded-Proto", "https")
 			},
 			Transport: &http.Transport{
 				Dial: func(netw, addr string) (net.Conn, error) {
@@ -179,4 +180,37 @@ var bufferPool = &sync.Pool{
 	New: func() interface{} {
 		return make([]byte, 32*1024)
 	},
+}
+
+// newSingleHostReverseProxy is a copy of httputil.NewSingleHostReverseProxy
+// with addition of "X-Forwarded-Proto" header.
+func newSingleHostReverseProxy(target *url.URL) *httputil.ReverseProxy {
+	targetQuery := target.RawQuery
+	director := func(req *http.Request) {
+		req.URL.Scheme = target.Scheme
+		req.URL.Host = target.Host
+		req.URL.Path = singleJoiningSlash(target.Path, req.URL.Path)
+		if targetQuery == "" || req.URL.RawQuery == "" {
+			req.URL.RawQuery = targetQuery + req.URL.RawQuery
+		} else {
+			req.URL.RawQuery = targetQuery + "&" + req.URL.RawQuery
+		}
+		if _, ok := req.Header["User-Agent"]; !ok {
+			req.Header.Set("User-Agent", "")
+		}
+		req.Header.Set("X-Forwarded-Proto", "https")
+	}
+	return &httputil.ReverseProxy{Director: director}
+}
+
+func singleJoiningSlash(a, b string) string {
+	aslash := strings.HasSuffix(a, "/")
+	bslash := strings.HasPrefix(b, "/")
+	switch {
+	case aslash && bslash:
+		return a + b[1:]
+	case !aslash && !bslash:
+		return a + "/" + b
+	}
+	return a + b
 }
