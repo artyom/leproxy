@@ -31,6 +31,7 @@ func main() {
 		Cache string `flag:"cacheDir,path to directory to cache key and certificates"`
 		HSTS  bool   `flag:"hsts,add Strict-Transport-Security header"`
 		Email string `flag:"email,contact email address presented to letsencrypt CA"`
+		HTTP  string `flag:"http,optional address to serve http-to-https redirect endpoint"`
 
 		RTo time.Duration `flag:"rto,maximum duration before timing out read of the request"`
 		WTo time.Duration `flag:"wto,maximum duration before timing out write of the response"`
@@ -54,6 +55,17 @@ func main() {
 	}
 	if params.WTo > 0 {
 		srv.WriteTimeout = params.WTo
+	}
+	if params.HTTP != "" {
+		go func(addr string) {
+			srv := http.Server{
+				Addr:         addr,
+				Handler:      http.HandlerFunc(httpsRedirect),
+				ReadTimeout:  10 * time.Second,
+				WriteTimeout: 10 * time.Second,
+			}
+			log.Fatal(srv.ListenAndServe())
+		}(params.HTTP)
 	}
 	log.Fatal(srv.ListenAndServeTLS("", ""))
 }
@@ -213,4 +225,13 @@ func singleJoiningSlash(a, b string) string {
 		return a + "/" + b
 	}
 	return a + b
+}
+
+func httpsRedirect(w http.ResponseWriter, r *http.Request) {
+	u := *r.URL
+	u.Scheme, u.Host = "https", r.Host
+	if h, _, err := net.SplitHostPort(r.Host); err == nil {
+		u.Host = h
+	}
+	http.Redirect(w, r, u.String(), http.StatusMovedPermanently)
 }
