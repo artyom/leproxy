@@ -82,8 +82,8 @@ func setupServer(addr, mapfile, cacheDir, email string, hsts bool) (*http.Server
 	if hsts {
 		proxy = &hstsProxy{proxy}
 	}
-	if fi, err := os.Stat(cacheDir); err == nil && !fi.IsDir() {
-		return nil, fmt.Errorf("path %q already exists and is not a directory", cacheDir)
+	if err := os.MkdirAll(cacheDir, 0700); err != nil {
+		return nil, fmt.Errorf("cannot create cache directory %q: %v", cacheDir, err)
 	}
 	m := autocert.Manager{
 		Prompt:     autocert.AcceptTOS,
