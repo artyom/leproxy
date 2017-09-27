@@ -15,6 +15,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -110,7 +111,12 @@ func setProxy(mapping map[string]string) (http.Handler, error) {
 			return nil, fmt.Errorf("invalid hostname: %q", hostname)
 		}
 		network := "tcp"
-		if filepath.IsAbs(backendAddr) {
+		if backendAddr != "" && backendAddr[0] == '@' && runtime.GOOS == "linux" {
+			// append \0 to address so addrlen for connect(2) is
+			// calculated in a way compatible with some other
+			// implementations (i.e. uwsgi)
+			network, backendAddr = "unix", backendAddr+string(0)
+		} else if filepath.IsAbs(backendAddr) {
 			network = "unix"
 			if strings.HasSuffix(backendAddr, string(os.PathSeparator)) {
 				// path specified as directory with explicit trailing
@@ -118,8 +124,7 @@ func setProxy(mapping map[string]string) (http.Handler, error) {
 				mux.Handle(hostname+"/", http.FileServer(http.Dir(backendAddr)))
 				continue
 			}
-		}
-		if u, err := url.Parse(backendAddr); err == nil {
+		} else if u, err := url.Parse(backendAddr); err == nil {
 			switch u.Scheme {
 			case "http", "https":
 				rp := newSingleHostReverseProxy(u)
