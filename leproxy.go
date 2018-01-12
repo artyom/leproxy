@@ -32,12 +32,13 @@ func main() {
 		Cache string `flag:"cacheDir,path to directory to cache key and certificates"`
 		HSTS  bool   `flag:"hsts,add Strict-Transport-Security header"`
 		Email string `flag:"email,contact email address presented to letsencrypt CA"`
-		HTTP  string `flag:"http,optional address to serve http-to-https redirect endpoint"`
+		HTTP  string `flag:"http,optional address to serve http-to-https redirects and ACME http-01 challenge responses"`
 
 		RTo time.Duration `flag:"rto,maximum duration before timing out read of the request"`
 		WTo time.Duration `flag:"wto,maximum duration before timing out write of the response"`
 	}{
 		Addr:  ":https",
+		HTTP:  ":http",
 		Conf:  "mapping.yml",
 		Cache: "/var/cache/letsencrypt",
 		RTo:   time.Minute,
@@ -47,7 +48,7 @@ func main() {
 	if params.Cache == "" {
 		log.Fatal("no cache specified")
 	}
-	srv, err := setupServer(params.Addr, params.Conf, params.Cache, params.Email, params.HSTS)
+	srv, httpHandler, err := setupServer(params.Addr, params.Conf, params.Cache, params.Email, params.HSTS)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -61,7 +62,7 @@ func main() {
 		go func(addr string) {
 			srv := http.Server{
 				Addr:         addr,
-				Handler:      http.HandlerFunc(httpsRedirect),
+				Handler:      httpHandler,
 				ReadTimeout:  10 * time.Second,
 				WriteTimeout: 10 * time.Second,
 			}
@@ -71,20 +72,20 @@ func main() {
 	log.Fatal(srv.ListenAndServeTLS("", ""))
 }
 
-func setupServer(addr, mapfile, cacheDir, email string, hsts bool) (*http.Server, error) {
+func setupServer(addr, mapfile, cacheDir, email string, hsts bool) (*http.Server, http.Handler, error) {
 	mapping, err := readMapping(mapfile)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	proxy, err := setProxy(mapping)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	if hsts {
 		proxy = &hstsProxy{proxy}
 	}
 	if err := os.MkdirAll(cacheDir, 0700); err != nil {
-		return nil, fmt.Errorf("cannot create cache directory %q: %v", cacheDir, err)
+		return nil, nil, fmt.Errorf("cannot create cache directory %q: %v", cacheDir, err)
 	}
 	m := autocert.Manager{
 		Prompt:     autocert.AcceptTOS,
@@ -97,7 +98,7 @@ func setupServer(addr, mapfile, cacheDir, email string, hsts bool) (*http.Server
 		Addr:      addr,
 		TLSConfig: &tls.Config{GetCertificate: m.GetCertificate},
 	}
-	return srv, nil
+	return srv, m.HTTPHandler(nil), nil
 }
 
 func setProxy(mapping map[string]string) (http.Handler, error) {
@@ -230,13 +231,4 @@ func singleJoiningSlash(a, b string) string {
 		return a + "/" + b
 	}
 	return a + b
-}
-
-func httpsRedirect(w http.ResponseWriter, r *http.Request) {
-	u := *r.URL
-	u.Scheme, u.Host = "https", r.Host
-	if h, _, err := net.SplitHostPort(r.Host); err == nil {
-		u.Host = h
-	}
-	http.Redirect(w, r, u.String(), http.StatusMovedPermanently)
 }
