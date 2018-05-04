@@ -26,18 +26,7 @@ import (
 )
 
 func main() {
-	params := struct {
-		Addr  string `flag:"addr,address to listen at"`
-		Conf  string `flag:"map,file with host/backend mapping"`
-		Cache string `flag:"cacheDir,path to directory to cache key and certificates"`
-		HSTS  bool   `flag:"hsts,add Strict-Transport-Security header"`
-		Email string `flag:"email,contact email address presented to letsencrypt CA"`
-		HTTP  string `flag:"http,optional address to serve http-to-https redirects and ACME http-01 challenge responses"`
-
-		RTo  time.Duration `flag:"rto,maximum duration before timing out read of the request"`
-		WTo  time.Duration `flag:"wto,maximum duration before timing out write of the response"`
-		Idle time.Duration `flag:"idle,how long idle connection is kept before closing (set rto, wto to 0 to use this)"`
-	}{
+	params := runArgs{
 		Addr:  ":https",
 		HTTP:  ":http",
 		Conf:  "mapping.yml",
@@ -46,12 +35,31 @@ func main() {
 		WTo:   5 * time.Minute,
 	}
 	autoflags.Parse(&params)
+	if err := run(params); err != nil {
+		log.Fatal(err)
+	}
+}
+
+type runArgs struct {
+	Addr  string `flag:"addr,address to listen at"`
+	Conf  string `flag:"map,file with host/backend mapping"`
+	Cache string `flag:"cacheDir,path to directory to cache key and certificates"`
+	HSTS  bool   `flag:"hsts,add Strict-Transport-Security header"`
+	Email string `flag:"email,contact email address presented to letsencrypt CA"`
+	HTTP  string `flag:"http,optional address to serve http-to-https redirects and ACME http-01 challenge responses"`
+
+	RTo  time.Duration `flag:"rto,maximum duration before timing out read of the request"`
+	WTo  time.Duration `flag:"wto,maximum duration before timing out write of the response"`
+	Idle time.Duration `flag:"idle,how long idle connection is kept before closing (set rto, wto to 0 to use this)"`
+}
+
+func run(params runArgs) error {
 	if params.Cache == "" {
-		log.Fatal("no cache specified")
+		return fmt.Errorf("no cache specified")
 	}
 	srv, httpHandler, err := setupServer(params.Addr, params.Conf, params.Cache, params.Email, params.HSTS)
 	if err != nil {
-		log.Fatal(err)
+		return err
 	}
 	srv.ReadHeaderTimeout = 5 * time.Second
 	if params.RTo > 0 {
@@ -68,20 +76,20 @@ func main() {
 				ReadTimeout:  10 * time.Second,
 				WriteTimeout: 10 * time.Second,
 			}
-			log.Fatal(srv.ListenAndServe())
+			log.Fatal(srv.ListenAndServe()) // TODO: should return err from run, not exit like this
 		}(params.HTTP)
 	}
 	if srv.ReadTimeout != 0 || srv.WriteTimeout != 0 || params.Idle == 0 {
-		log.Fatal(srv.ListenAndServeTLS("", ""))
+		return srv.ListenAndServeTLS("", "")
 	}
 	ln, err := net.Listen("tcp", srv.Addr)
 	if err != nil {
-		log.Fatal(err)
+		return err
 	}
 	defer ln.Close()
 	ln = tcpKeepAliveListener{d: params.Idle,
 		TCPListener: ln.(*net.TCPListener)}
-	log.Fatal(srv.ServeTLS(ln, "", ""))
+	return srv.ServeTLS(ln, "", "")
 }
 
 func setupServer(addr, mapfile, cacheDir, email string, hsts bool) (*http.Server, http.Handler, error) {
