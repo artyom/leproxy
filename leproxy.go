@@ -26,7 +26,7 @@ import (
 )
 
 func main() {
-	params := runArgs{
+	args := runArgs{
 		Addr:  ":https",
 		HTTP:  ":http",
 		Conf:  "mapping.yml",
@@ -34,8 +34,8 @@ func main() {
 		RTo:   time.Minute,
 		WTo:   5 * time.Minute,
 	}
-	autoflags.Parse(&params)
-	if err := run(params); err != nil {
+	autoflags.Parse(&args)
+	if err := run(args); err != nil {
 		log.Fatal(err)
 	}
 }
@@ -53,22 +53,22 @@ type runArgs struct {
 	Idle time.Duration `flag:"idle,how long idle connection is kept before closing (set rto, wto to 0 to use this)"`
 }
 
-func run(params runArgs) error {
-	if params.Cache == "" {
+func run(args runArgs) error {
+	if args.Cache == "" {
 		return fmt.Errorf("no cache specified")
 	}
-	srv, httpHandler, err := setupServer(params.Addr, params.Conf, params.Cache, params.Email, params.HSTS)
+	srv, httpHandler, err := setupServer(args.Addr, args.Conf, args.Cache, args.Email, args.HSTS)
 	if err != nil {
 		return err
 	}
 	srv.ReadHeaderTimeout = 5 * time.Second
-	if params.RTo > 0 {
-		srv.ReadTimeout = params.RTo
+	if args.RTo > 0 {
+		srv.ReadTimeout = args.RTo
 	}
-	if params.WTo > 0 {
-		srv.WriteTimeout = params.WTo
+	if args.WTo > 0 {
+		srv.WriteTimeout = args.WTo
 	}
-	if params.HTTP != "" {
+	if args.HTTP != "" {
 		go func(addr string) {
 			srv := http.Server{
 				Addr:         addr,
@@ -77,9 +77,9 @@ func run(params runArgs) error {
 				WriteTimeout: 10 * time.Second,
 			}
 			log.Fatal(srv.ListenAndServe()) // TODO: should return err from run, not exit like this
-		}(params.HTTP)
+		}(args.HTTP)
 	}
-	if srv.ReadTimeout != 0 || srv.WriteTimeout != 0 || params.Idle == 0 {
+	if srv.ReadTimeout != 0 || srv.WriteTimeout != 0 || args.Idle == 0 {
 		return srv.ListenAndServeTLS("", "")
 	}
 	ln, err := net.Listen("tcp", srv.Addr)
@@ -87,7 +87,7 @@ func run(params runArgs) error {
 		return err
 	}
 	defer ln.Close()
-	ln = tcpKeepAliveListener{d: params.Idle,
+	ln = tcpKeepAliveListener{d: args.Idle,
 		TCPListener: ln.(*net.TCPListener)}
 	return srv.ServeTLS(ln, "", "")
 }
