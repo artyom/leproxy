@@ -34,8 +34,9 @@ func main() {
 		Email string `flag:"email,contact email address presented to letsencrypt CA"`
 		HTTP  string `flag:"http,optional address to serve http-to-https redirects and ACME http-01 challenge responses"`
 
-		RTo time.Duration `flag:"rto,maximum duration before timing out read of the request"`
-		WTo time.Duration `flag:"wto,maximum duration before timing out write of the response"`
+		RTo  time.Duration `flag:"rto,maximum duration before timing out read of the request"`
+		WTo  time.Duration `flag:"wto,maximum duration before timing out write of the response"`
+		Idle time.Duration `flag:"idle,how long idle connection is kept before closing (set rto, wto to 0 to use this)"`
 	}{
 		Addr:  ":https",
 		HTTP:  ":http",
@@ -52,6 +53,7 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+	srv.ReadHeaderTimeout = 5 * time.Second
 	if params.RTo > 0 {
 		srv.ReadTimeout = params.RTo
 	}
@@ -69,7 +71,17 @@ func main() {
 			log.Fatal(srv.ListenAndServe())
 		}(params.HTTP)
 	}
-	log.Fatal(srv.ListenAndServeTLS("", ""))
+	if srv.ReadTimeout != 0 || srv.WriteTimeout != 0 || params.Idle == 0 {
+		log.Fatal(srv.ListenAndServeTLS("", ""))
+	}
+	ln, err := net.Listen("tcp", srv.Addr)
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer ln.Close()
+	ln = tcpKeepAliveListener{d: params.Idle,
+		TCPListener: ln.(*net.TCPListener)}
+	log.Fatal(srv.ServeTLS(ln, "", ""))
 }
 
 func setupServer(addr, mapfile, cacheDir, email string, hsts bool) (*http.Server, http.Handler, error) {
@@ -231,4 +243,45 @@ func singleJoiningSlash(a, b string) string {
 		return a + "/" + b
 	}
 	return a + b
+}
+
+// tcpKeepAliveListener sets TCP keep-alive timeouts on accepted
+// connections. It's used by ListenAndServe and ListenAndServeTLS so
+// dead TCP connections (e.g. closing laptop mid-download) eventually
+// go away.
+type tcpKeepAliveListener struct {
+	d time.Duration
+	*net.TCPListener
+}
+
+func (ln tcpKeepAliveListener) Accept() (net.Conn, error) {
+	tc, err := ln.AcceptTCP()
+	if err != nil {
+		return nil, err
+	}
+	tc.SetKeepAlive(true)
+	tc.SetKeepAlivePeriod(3 * time.Minute)
+	return timeoutConn{d: ln.d, TCPConn: tc}, nil
+}
+
+// timeoutConn extends deadline after successful read or write operations
+type timeoutConn struct {
+	d time.Duration
+	*net.TCPConn
+}
+
+func (c timeoutConn) Read(b []byte) (int, error) {
+	n, err := c.TCPConn.Read(b)
+	if err == nil {
+		_ = c.TCPConn.SetDeadline(time.Now().Add(c.d))
+	}
+	return n, err
+}
+
+func (c timeoutConn) Write(b []byte) (int, error) {
+	n, err := c.TCPConn.Write(b)
+	if err == nil {
+		_ = c.TCPConn.SetDeadline(time.Now().Add(c.d))
+	}
+	return n, err
 }
