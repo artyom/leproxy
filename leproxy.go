@@ -4,7 +4,6 @@ package main
 
 import (
 	"bytes"
-	"crypto/tls"
 	"fmt"
 	"io"
 	"io/ioutil"
@@ -116,7 +115,7 @@ func setupServer(addr, mapfile, cacheDir, email string, hsts bool) (*http.Server
 	srv := &http.Server{
 		Handler:   proxy,
 		Addr:      addr,
-		TLSConfig: &tls.Config{GetCertificate: m.GetCertificate},
+		TLSConfig: m.TLSConfig(),
 	}
 	return srv, m.HTTPHandler(nil), nil
 }
