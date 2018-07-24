@@ -269,6 +269,9 @@ func (ln tcpKeepAliveListener) Accept() (net.Conn, error) {
 	}
 	tc.SetKeepAlive(true)
 	tc.SetKeepAlivePeriod(3 * time.Minute)
+	if ln.d == 0 {
+		return tc, nil
+	}
 	return timeoutConn{d: ln.d, TCPConn: tc}, nil
 }
 
