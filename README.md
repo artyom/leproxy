@@ -3,7 +3,7 @@ usage for multiple hostnames/backends
 
 Install:
 
-	go get github.com/artyom/leproxy	
+	go get github.com/artyom/leproxy
 
 Run:
 
@@ -32,3 +32,10 @@ calculate addrlen including trailing zero byte despite [documentation not
 requiring that](http://man7.org/linux/man-pages/man7/unix.7.html). It won't
 work with other implementations that calculate addrlen differently (i.e. by
 taking into account only `strlen(addr)` like Go, or even `UNIX_PATH_MAX`).
+
+Alternatively you can specify the host-to-backend mapping inline with the
+-inlineMap flag. Multiple mapping pairs should be separated with commas.
+
+Example:
+
+    leproxy -inlineMap subdomain1.example.com:127.0.0.1:8080,static.example.com:/var/www/

@@ -26,12 +26,13 @@ import (
 
 func main() {
 	args := runArgs{
-		Addr:  ":https",
-		HTTP:  ":http",
-		Conf:  "mapping.yml",
-		Cache: "/var/cache/letsencrypt",
-		RTo:   time.Minute,
-		WTo:   5 * time.Minute,
+		Addr:      ":https",
+		HTTP:      ":http",
+		Conf:      "",
+		InlineMap: "",
+		Cache:     "/var/cache/letsencrypt",
+		RTo:       time.Minute,
+		WTo:       5 * time.Minute,
 	}
 	autoflags.Parse(&args)
 	if err := run(args); err != nil {
@@ -40,12 +41,13 @@ func main() {
 }
 
 type runArgs struct {
-	Addr  string `flag:"addr,address to listen at"`
-	Conf  string `flag:"map,file with host/backend mapping"`
-	Cache string `flag:"cacheDir,path to directory to cache key and certificates"`
-	HSTS  bool   `flag:"hsts,add Strict-Transport-Security header"`
-	Email string `flag:"email,contact email address presented to letsencrypt CA"`
-	HTTP  string `flag:"http,optional address to serve http-to-https redirects and ACME http-01 challenge responses"`
+	Addr      string `flag:"addr,address to listen at"`
+	Conf      string `flag:"map,file with host/backend mapping"`
+	InlineMap string `flag:"inlineMap,string with host/backend mapping"`
+	Cache     string `flag:"cacheDir,path to directory to cache key and certificates"`
+	HSTS      bool   `flag:"hsts,add Strict-Transport-Security header"`
+	Email     string `flag:"email,contact email address presented to letsencrypt CA"`
+	HTTP      string `flag:"http,optional address to serve http-to-https redirects and ACME http-01 challenge responses"`
 
 	RTo  time.Duration `flag:"rto,maximum duration before timing out read of the request"`
 	WTo  time.Duration `flag:"wto,maximum duration before timing out write of the response"`
@@ -56,7 +58,10 @@ func run(args runArgs) error {
 	if args.Cache == "" {
 		return fmt.Errorf("no cache specified")
 	}
-	srv, httpHandler, err := setupServer(args.Addr, args.Conf, args.Cache, args.Email, args.HSTS)
+	if args.Conf == "" && args.InlineMap == "" {
+		return fmt.Errorf("no mapping specified")
+	}
+	srv, httpHandler, err := setupServer(args.Addr, args.Conf, args.InlineMap, args.Cache, args.Email, args.HSTS)
 	if err != nil {
 		return err
 	}
@@ -91,11 +96,19 @@ func run(args runArgs) error {
 	return srv.ServeTLS(ln, "", "")
 }
 
-func setupServer(addr, mapfile, cacheDir, email string, hsts bool) (*http.Server, http.Handler, error) {
+func setupServer(addr, mapfile, inlineMap, cacheDir, email string, hsts bool) (*http.Server, http.Handler, error) {
 	mapping, err := readMapping(mapfile)
 	if err != nil {
 		return nil, nil, err
 	}
+	inline, err := readInlineMapping(inlineMap)
+	if err != nil {
+		return nil, nil, err
+	}
+	for k, v := range inline {
+		mapping[k] = v
+	}
+
 	proxy, err := setProxy(mapping)
 	if err != nil {
 		return nil, nil, err
@@ -174,6 +187,10 @@ func setProxy(mapping map[string]string) (http.Handler, error) {
 }
 
 func readMapping(file string) (map[string]string, error) {
+	if file == "" {
+		m := make(map[string]string)
+		return m, nil
+	}
 	f, err := os.Open(file)
 	if err != nil {
 		return nil, err
@@ -187,6 +204,18 @@ func readMapping(file string) (map[string]string, error) {
 	m := make(map[string]string)
 	if err := yaml.Unmarshal(b.Bytes(), &m); err != nil {
 		return nil, err
+	}
+	return m, nil
+}
+
+func readInlineMapping(inlineMap string) (map[string]string, error) {
+	m := make(map[string]string)
+	for _, chunk := range strings.Split(inlineMap, ",") {
+		kv := strings.SplitN(chunk, ":", 2)
+		if len(kv) != 2 {
+			return nil, fmt.Errorf("Not found ':' delimiter in %s", chunk)
+		}
+		m[kv[0]] = kv[1]
 	}
 	return m, nil
 }
