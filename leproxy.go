@@ -29,7 +29,7 @@ func main() {
 		Addr:  ":https",
 		HTTP:  ":http",
 		Conf:  "mapping.yml",
-		Cache: "/var/cache/letsencrypt",
+		Cache: cachePath(),
 		RTo:   time.Minute,
 		WTo:   5 * time.Minute,
 	}
