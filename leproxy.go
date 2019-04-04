@@ -20,39 +20,93 @@ import (
 	"time"
 
 	"github.com/artyom/autoflags"
+	"github.com/kardianos/service"
 	"golang.org/x/crypto/acme/autocert"
 	"gopkg.in/yaml.v2"
 )
 
+var args = runArgs{
+	Addr:  ":https",
+	HTTP:  ":http",
+	Conf:  "mapping.yml",
+	Cache: cachePath(),
+	RTo:   time.Minute,
+	WTo:   5 * time.Minute,
+}
+
 func main() {
-	args := runArgs{
-		Addr:  ":https",
-		HTTP:  ":http",
-		Conf:  "mapping.yml",
-		Cache: cachePath(),
-		RTo:   time.Minute,
-		WTo:   5 * time.Minute,
-	}
+
 	autoflags.Parse(&args)
-	if err := run(args); err != nil {
+
+	svcConfig := &service.Config{
+		Name:        "leproxy",
+		DisplayName: "Let's Encrypt Proxy",
+		Description: "Provides a reverse proxy with Let's Encrypt SSL support",
+	}
+
+	prg := &program{}
+	s, err := service.New(prg, svcConfig)
+	if err != nil {
 		log.Fatal(err)
 	}
+
+	if args.Install {
+		err = s.Install()
+		if err != nil {
+			log.Fatalf("Unable to install application: %s", err.Error())
+		} else {
+			log.Fatalf("Service installed: %s", svcConfig.DisplayName)
+		}
+	} else if args.Remove {
+		err = s.Uninstall()
+		if err != nil {
+			log.Fatalf("Unable to remove application: %s", err.Error())
+		} else {
+			log.Fatalf("Service removed: %s", svcConfig.DisplayName)
+		}
+	} else {
+		err = s.Run()
+		if err != nil {
+			log.Fatalf("Unable to run application: %s", err.Error())
+		}
+	}
+
 }
 
 type runArgs struct {
-	Addr  string `flag:"addr,address to listen at"`
-	Conf  string `flag:"map,file with host/backend mapping"`
-	Cache string `flag:"cacheDir,path to directory to cache key and certificates"`
-	HSTS  bool   `flag:"hsts,add Strict-Transport-Security header"`
-	Email string `flag:"email,contact email address presented to letsencrypt CA"`
-	HTTP  string `flag:"http,optional address to serve http-to-https redirects and ACME http-01 challenge responses"`
+	Addr    string `flag:"addr,address to listen at"`
+	Conf    string `flag:"map,file with host/backend mapping"`
+	Cache   string `flag:"cacheDir,path to directory to cache key and certificates"`
+	HSTS    bool   `flag:"hsts,add Strict-Transport-Security header"`
+	Email   string `flag:"email,contact email address presented to letsencrypt CA"`
+	HTTP    string `flag:"http,optional address to serve http-to-https redirects and ACME http-01 challenge responses"`
+	Install bool   `flag:"install,installs as a windows service"`
+	Remove  bool   `flag:"remove,removes the windows service"`
 
 	RTo  time.Duration `flag:"rto,maximum duration before timing out read of the request"`
 	WTo  time.Duration `flag:"wto,maximum duration before timing out write of the response"`
 	Idle time.Duration `flag:"idle,how long idle connection is kept before closing (set rto, wto to 0 to use this)"`
 }
 
-func run(args runArgs) error {
+type program struct{}
+
+func (p *program) Start(s service.Service) error {
+	// Start should not block. Do the actual work async.
+	go p.run()
+	return nil
+}
+
+func (p *program) Stop(s service.Service) error {
+	return nil
+}
+
+func (p *program) run() {
+	if err := run(); err != nil {
+		log.Fatal(err)
+	}
+}
+
+func run() error {
 	if args.Cache == "" {
 		return fmt.Errorf("no cache specified")
 	}
