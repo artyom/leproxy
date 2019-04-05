@@ -91,6 +91,12 @@ type runArgs struct {
 type program struct{}
 
 func (p *program) Start(s service.Service) error {
+	// Set the working directory to be the current one
+	dir, err := filepath.Abs(filepath.Dir(os.Args[0]))
+	if err != nil {
+		log.Fatal(err)
+	}
+	os.Chdir(dir)
 	// Start should not block. Do the actual work async.
 	go p.run()
 	return nil
@@ -107,6 +113,7 @@ func (p *program) run() {
 }
 
 func run() error {
+
 	if args.Cache == "" {
 		return fmt.Errorf("no cache specified")
 	}
