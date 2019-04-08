@@ -21,7 +21,7 @@ import (
 
 	"github.com/artyom/autoflags"
 	"golang.org/x/crypto/acme/autocert"
-	"gopkg.in/yaml.v2"
+	yaml "gopkg.in/yaml.v2"
 )
 
 func main() {
@@ -204,7 +204,7 @@ type hstsProxy struct {
 }
 
 func (p *hstsProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
+	w.Header().Set("Strict-Transport-Security", "max-age=31536000; includeSubDomains; preload")
 	p.Handler.ServeHTTP(w, r)
 }
 
