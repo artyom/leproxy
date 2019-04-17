@@ -34,6 +34,11 @@ var args = runArgs{
 	WTo:   5 * time.Minute,
 }
 
+var (
+	mux   = Mux{}
+	certs autocert.Manager
+)
+
 func main() {
 
 	autoflags.Parse(&args)
@@ -71,6 +76,35 @@ func main() {
 		}
 	}
 
+}
+
+// Mux contains and servers the handlers for each hostname
+type Mux struct {
+	hostMap sync.Map
+}
+
+// Handle adds a handler if it doesn't exist
+func (mux *Mux) Handle(host string, handler http.Handler) {
+	if _, ok := mux.hostMap.Load(host); !ok {
+		mux.hostMap.Store(host, handler)
+		log.Printf("New handler added for host %s\n", host)
+	}
+}
+
+// Exists returns whether there is an
+func (mux *Mux) Exists(host string) bool {
+	_, ok := mux.hostMap.Load(host)
+	return ok
+}
+
+func (mux *Mux) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	result, ok := mux.hostMap.Load(r.Host)
+	if ok {
+		handler := result.(http.Handler)
+		handler.ServeHTTP(w, r)
+	} else {
+		http.Error(w, "Not found", 404)
+	}
 }
 
 type runArgs struct {
@@ -117,7 +151,7 @@ func run() error {
 	if args.Cache == "" {
 		return fmt.Errorf("no cache specified")
 	}
-	srv, httpHandler, err := setupServer(args.Addr, args.Conf, args.Cache, args.Email, args.HSTS)
+	srv, httpHandler, err := setupServer(args.Addr, args.Cache, args.Email, args.HSTS)
 	if err != nil {
 		return err
 	}
@@ -152,12 +186,18 @@ func run() error {
 	return srv.ServeTLS(ln, "", "")
 }
 
-func setupServer(addr, mapfile, cacheDir, email string, hsts bool) (*http.Server, http.Handler, error) {
-	mapping, err := readMapping(mapfile)
+func setupServer(addr, cacheDir, email string, hsts bool) (*http.Server, http.Handler, error) {
+	mapping, err := readMapping(args.Conf)
 	if err != nil {
 		return nil, nil, err
 	}
-	proxy, err := setProxy(mapping)
+	certs = autocert.Manager{
+		Prompt:     autocert.AcceptTOS,
+		Cache:      autocert.DirCache(cacheDir),
+		HostPolicy: autocert.HostWhitelist(keys(mapping)...),
+		Email:      email,
+	}
+	proxy, err := loadProxies(mapping)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -167,27 +207,28 @@ func setupServer(addr, mapfile, cacheDir, email string, hsts bool) (*http.Server
 	if err := os.MkdirAll(cacheDir, 0700); err != nil {
 		return nil, nil, fmt.Errorf("cannot create cache directory %q: %v", cacheDir, err)
 	}
-	m := autocert.Manager{
-		Prompt:     autocert.AcceptTOS,
-		Cache:      autocert.DirCache(cacheDir),
-		HostPolicy: autocert.HostWhitelist(keys(mapping)...),
-		Email:      email,
-	}
 	srv := &http.Server{
 		Handler:   proxy,
 		Addr:      addr,
-		TLSConfig: m.TLSConfig(),
+		TLSConfig: certs.TLSConfig(),
 	}
-	return srv, m.HTTPHandler(nil), nil
+	return srv, certs.HTTPHandler(nil), nil
 }
 
-func setProxy(mapping map[string]string) (http.Handler, error) {
+func loadProxies(mapping map[string]string) (http.Handler, error) {
 	if len(mapping) == 0 {
 		return nil, fmt.Errorf("empty mapping")
 	}
-	mux := http.NewServeMux()
+	// Update the host policy with any new hosts
+	certs.HostPolicy = autocert.HostWhitelist(keys(mapping)...)
+	// Add the each mapping
 	for hostname, backendAddr := range mapping {
 		hostname, backendAddr := hostname, backendAddr // intentional shadowing
+		if mux.Exists(hostname) {
+			// The handler already exists
+			// Updating the handler is not supported
+			continue
+		}
 		if strings.ContainsRune(hostname, os.PathSeparator) {
 			return nil, fmt.Errorf("invalid hostname: %q", hostname)
 		}
@@ -202,7 +243,7 @@ func setProxy(mapping map[string]string) (http.Handler, error) {
 			if strings.HasSuffix(backendAddr, string(os.PathSeparator)) {
 				// path specified as directory with explicit trailing
 				// slash; add this path as static site
-				mux.Handle(hostname+"/", http.FileServer(http.Dir(backendAddr)))
+				mux.Handle(hostname, http.FileServer(http.Dir(backendAddr)))
 				continue
 			}
 		} else if u, err := url.Parse(backendAddr); err == nil {
@@ -211,7 +252,7 @@ func setProxy(mapping map[string]string) (http.Handler, error) {
 				rp := newSingleHostReverseProxy(u)
 				rp.ErrorLog = log.New(ioutil.Discard, "", 0)
 				rp.BufferPool = bufPool{}
-				mux.Handle(hostname+"/", rp)
+				mux.Handle(hostname, rp)
 				continue
 			}
 		}
@@ -229,9 +270,9 @@ func setProxy(mapping map[string]string) (http.Handler, error) {
 			ErrorLog:   log.New(ioutil.Discard, "", 0),
 			BufferPool: bufPool{},
 		}
-		mux.Handle(hostname+"/", rp)
+		mux.Handle(hostname, rp)
 	}
-	return mux, nil
+	return &mux, nil
 }
 
 func readMapping(file string) (map[string]string, error) {
