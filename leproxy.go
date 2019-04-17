@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/artyom/autoflags"
+	"github.com/fsnotify/fsnotify"
 	"github.com/kardianos/service"
 	"golang.org/x/crypto/acme/autocert"
 	"gopkg.in/yaml.v2"
@@ -35,7 +36,7 @@ var args = runArgs{
 }
 
 var (
-	mux   = Mux{}
+	proxy = Proxy{}
 	certs autocert.Manager
 )
 
@@ -78,27 +79,28 @@ func main() {
 
 }
 
-// Mux contains and servers the handlers for each hostname
-type Mux struct {
+// Proxy contains and servers the handlers for each hostname
+type Proxy struct {
 	hostMap sync.Map
 }
 
 // Handle adds a handler if it doesn't exist
-func (mux *Mux) Handle(host string, handler http.Handler) {
-	if _, ok := mux.hostMap.Load(host); !ok {
-		mux.hostMap.Store(host, handler)
+func (proxy *Proxy) Handle(host string, handler http.Handler) {
+	if _, ok := proxy.hostMap.Load(host); !ok {
+		proxy.hostMap.Store(host, handler)
 		log.Printf("New handler added for host %s\n", host)
 	}
 }
 
 // Exists returns whether there is an
-func (mux *Mux) Exists(host string) bool {
-	_, ok := mux.hostMap.Load(host)
+func (proxy *Proxy) Exists(host string) bool {
+	_, ok := proxy.hostMap.Load(host)
 	return ok
 }
 
-func (mux *Mux) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	result, ok := mux.hostMap.Load(r.Host)
+func (proxy *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
+	result, ok := proxy.hostMap.Load(r.Host)
 	if ok {
 		handler := result.(http.Handler)
 		handler.ServeHTTP(w, r)
@@ -162,6 +164,36 @@ func run() error {
 	if args.WTo > 0 {
 		srv.WriteTimeout = args.WTo
 	}
+
+	watcher, err := fsnotify.NewWatcher()
+	if err != nil {
+		return err
+	}
+	defer watcher.Close()
+
+	go func() {
+		for {
+			select {
+			// watch for events
+			case event := <-watcher.Events:
+				fmt.Println(event.Name, event.Op)
+				mapping, err := readMapping(args.Conf)
+				if err != nil {
+					fmt.Println("ERROR", event.Name, event.Op, err)
+				} else {
+					loadProxies(mapping)
+				}
+			case err := <-watcher.Errors:
+				fmt.Println("ERROR", err)
+			}
+		}
+	}()
+
+	// Watch the mapping file....
+	if err := watcher.Add(args.Conf); err != nil {
+		return err
+	}
+
 	if args.HTTP != "" {
 		go func(addr string) {
 			srv := http.Server{
@@ -197,40 +229,37 @@ func setupServer(addr, cacheDir, email string, hsts bool) (*http.Server, http.Ha
 		HostPolicy: autocert.HostWhitelist(keys(mapping)...),
 		Email:      email,
 	}
-	proxy, err := loadProxies(mapping)
+	err = loadProxies(mapping)
 	if err != nil {
 		return nil, nil, err
-	}
-	if hsts {
-		proxy = &hstsProxy{proxy}
 	}
 	if err := os.MkdirAll(cacheDir, 0700); err != nil {
 		return nil, nil, fmt.Errorf("cannot create cache directory %q: %v", cacheDir, err)
 	}
 	srv := &http.Server{
-		Handler:   proxy,
+		Handler:   &proxy,
 		Addr:      addr,
 		TLSConfig: certs.TLSConfig(),
 	}
 	return srv, certs.HTTPHandler(nil), nil
 }
 
-func loadProxies(mapping map[string]string) (http.Handler, error) {
+func loadProxies(mapping map[string]string) error {
 	if len(mapping) == 0 {
-		return nil, fmt.Errorf("empty mapping")
+		return fmt.Errorf("empty mapping")
 	}
 	// Update the host policy with any new hosts
 	certs.HostPolicy = autocert.HostWhitelist(keys(mapping)...)
 	// Add the each mapping
 	for hostname, backendAddr := range mapping {
 		hostname, backendAddr := hostname, backendAddr // intentional shadowing
-		if mux.Exists(hostname) {
+		if proxy.Exists(hostname) {
 			// The handler already exists
 			// Updating the handler is not supported
 			continue
 		}
 		if strings.ContainsRune(hostname, os.PathSeparator) {
-			return nil, fmt.Errorf("invalid hostname: %q", hostname)
+			return fmt.Errorf("invalid hostname: %q", hostname)
 		}
 		network := "tcp"
 		if backendAddr != "" && backendAddr[0] == '@' && runtime.GOOS == "linux" {
@@ -243,7 +272,7 @@ func loadProxies(mapping map[string]string) (http.Handler, error) {
 			if strings.HasSuffix(backendAddr, string(os.PathSeparator)) {
 				// path specified as directory with explicit trailing
 				// slash; add this path as static site
-				mux.Handle(hostname, http.FileServer(http.Dir(backendAddr)))
+				proxy.Handle(hostname, http.FileServer(http.Dir(backendAddr)))
 				continue
 			}
 		} else if u, err := url.Parse(backendAddr); err == nil {
@@ -252,7 +281,7 @@ func loadProxies(mapping map[string]string) (http.Handler, error) {
 				rp := newSingleHostReverseProxy(u)
 				rp.ErrorLog = log.New(ioutil.Discard, "", 0)
 				rp.BufferPool = bufPool{}
-				mux.Handle(hostname, rp)
+				proxy.Handle(hostname, rp)
 				continue
 			}
 		}
@@ -270,9 +299,9 @@ func loadProxies(mapping map[string]string) (http.Handler, error) {
 			ErrorLog:   log.New(ioutil.Discard, "", 0),
 			BufferPool: bufPool{},
 		}
-		mux.Handle(hostname, rp)
+		proxy.Handle(hostname, rp)
 	}
-	return &mux, nil
+	return nil
 }
 
 func readMapping(file string) (map[string]string, error) {
@@ -299,15 +328,6 @@ func keys(m map[string]string) []string {
 		out = append(out, k)
 	}
 	return out
-}
-
-type hstsProxy struct {
-	http.Handler
-}
-
-func (p *hstsProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
-	p.Handler.ServeHTTP(w, r)
 }
 
 type bufPool struct{}
