@@ -23,7 +23,7 @@ import (
 	"github.com/fsnotify/fsnotify"
 	"github.com/kardianos/service"
 	"golang.org/x/crypto/acme/autocert"
-	"gopkg.in/yaml.v2"
+	yaml "gopkg.in/yaml.v2"
 )
 
 var args = runArgs{
@@ -99,7 +99,7 @@ func (proxy *Proxy) Exists(host string) bool {
 }
 
 func (proxy *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
+	w.Header().Set("Strict-Transport-Security", "max-age=31536000; includeSubDomains; preload")
 	result, ok := proxy.hostMap.Load(r.Host)
 	if ok {
 		handler := result.(http.Handler)
