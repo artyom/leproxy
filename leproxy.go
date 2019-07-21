@@ -85,28 +85,35 @@ type Proxy struct {
 }
 
 // Handle adds a handler if it doesn't exist
-func (proxy *Proxy) Handle(host string, handler http.Handler) {
-	if _, ok := proxy.hostMap.Load(host); !ok {
-		proxy.hostMap.Store(host, handler)
-		log.Printf("New handler added for host %s\n", host)
-	}
+func (proxy *Proxy) Handle(host string, handler *ProxyHandler) {
+	proxy.hostMap.Store(host, handler)
 }
 
 // Exists returns whether there is an
-func (proxy *Proxy) Exists(host string) bool {
-	_, ok := proxy.hostMap.Load(host)
-	return ok
+func (proxy *Proxy) Exists(host, target string) bool {
+	item, ok := proxy.hostMap.Load(host)
+	if !ok {
+		return false
+	}
+	return item.(*ProxyHandler).TargetName == target
 }
 
 func (proxy *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Strict-Transport-Security", "max-age=31536000; includeSubDomains; preload")
 	result, ok := proxy.hostMap.Load(r.Host)
 	if ok {
-		handler := result.(http.Handler)
-		handler.ServeHTTP(w, r)
+		handler := result.(*ProxyHandler)
+		handler.Handler.ServeHTTP(w, r)
 	} else {
 		http.Error(w, "Not found", 404)
 	}
+}
+
+// ProxyHandler holds the info and handler of each proxy
+type ProxyHandler struct {
+	HostName   string
+	TargetName string
+	Handler    http.Handler
 }
 
 type runArgs struct {
@@ -253,9 +260,8 @@ func loadProxies(mapping map[string]string) error {
 	// Add the each mapping
 	for hostname, backendAddr := range mapping {
 		hostname, backendAddr := hostname, backendAddr // intentional shadowing
-		if proxy.Exists(hostname) {
-			// The handler already exists
-			// Updating the handler is not supported
+		if proxy.Exists(hostname, backendAddr) {
+			// The handler already exists and hasn't changed
 			continue
 		}
 		if strings.ContainsRune(hostname, os.PathSeparator) {
@@ -272,7 +278,11 @@ func loadProxies(mapping map[string]string) error {
 			if strings.HasSuffix(backendAddr, string(os.PathSeparator)) {
 				// path specified as directory with explicit trailing
 				// slash; add this path as static site
-				proxy.Handle(hostname, http.FileServer(http.Dir(backendAddr)))
+				proxy.Handle(hostname, &ProxyHandler{
+					HostName:   hostname,
+					TargetName: backendAddr,
+					Handler:    http.FileServer(http.Dir(backendAddr)),
+				})
 				continue
 			}
 		} else if u, err := url.Parse(backendAddr); err == nil {
@@ -281,7 +291,11 @@ func loadProxies(mapping map[string]string) error {
 				rp := newSingleHostReverseProxy(u)
 				rp.ErrorLog = log.New(ioutil.Discard, "", 0)
 				rp.BufferPool = bufPool{}
-				proxy.Handle(hostname, rp)
+				proxy.Handle(hostname, &ProxyHandler{
+					HostName:   hostname,
+					TargetName: backendAddr,
+					Handler:    rp,
+				})
 				continue
 			}
 		}
@@ -299,7 +313,11 @@ func loadProxies(mapping map[string]string) error {
 			ErrorLog:   log.New(ioutil.Discard, "", 0),
 			BufferPool: bufPool{},
 		}
-		proxy.Handle(hostname, rp)
+		proxy.Handle(hostname, &ProxyHandler{
+			HostName:   hostname,
+			TargetName: backendAddr,
+			Handler:    rp,
+		})
 	}
 	return nil
 }

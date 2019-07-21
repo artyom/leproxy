@@ -9,6 +9,10 @@ Run:
 
 	leproxy -addr :https -map /path/to/mapping.yml -cacheDir /path/to/letsencrypt
 
+Install as a Windows service:
+
+	leproxy -install
+
 `mapping.yml` contains host-to-backend mapping, where backend can be specified as:
 
  * http/https url for http(s) connections to backend *without* passing "Host"
@@ -32,3 +36,5 @@ calculate addrlen including trailing zero byte despite [documentation not
 requiring that](http://man7.org/linux/man-pages/man7/unix.7.html). It won't
 work with other implementations that calculate addrlen differently (i.e. by
 taking into account only `strlen(addr)` like Go, or even `UNIX_PATH_MAX`).
+
+> The mapping file can be dynamically updated and any changes or additions will be available. Deletions require a restart to be removed.
