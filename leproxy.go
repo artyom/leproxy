@@ -127,15 +127,16 @@ type ProxyHandler struct {
 }
 
 type runArgs struct {
-	Addr     string `flag:"addr,address to listen at"`
-	HTTPOnly bool   `flag:"httponly,only use http"`
-	Conf     string `flag:"map,file with host/backend mapping"`
-	Cache    string `flag:"cacheDir,path to directory to cache key and certificates"`
-	HSTS     bool   `flag:"hsts,add Strict-Transport-Security header"`
-	Email    string `flag:"email,contact email address presented to letsencrypt CA"`
-	HTTP     string `flag:"http,optional address to serve http-to-https redirects and ACME http-01 challenge responses"`
-	Install  bool   `flag:"install,installs as a windows service"`
-	Remove   bool   `flag:"remove,removes the windows service"`
+	Addr          string `flag:"addr,address to listen at"`
+	HTTPOnly      bool   `flag:"http-only,only use http"`
+	TLSSkipVerify bool   `flag:"tls-skip-verify,only use http"`
+	Conf          string `flag:"map,file with host/backend mapping"`
+	Cache         string `flag:"cacheDir,path to directory to cache key and certificates"`
+	HSTS          bool   `flag:"hsts,add Strict-Transport-Security header"`
+	Email         string `flag:"email,contact email address presented to letsencrypt CA"`
+	HTTP          string `flag:"http,optional address to serve http-to-https redirects and ACME http-01 challenge responses"`
+	Install       bool   `flag:"install,installs as a windows service"`
+	Remove        bool   `flag:"remove,removes the windows service"`
 
 	RTo  time.Duration `flag:"rto,maximum duration before timing out read of the request"`
 	WTo  time.Duration `flag:"wto,maximum duration before timing out write of the response"`
@@ -401,11 +402,16 @@ func newSingleHostReverseProxy(target *url.URL) *httputil.ReverseProxy {
 		}
 		req.Header.Set("X-Forwarded-Proto", "https")
 	}
+	if args.TLSSkipVerify {
+		return &httputil.ReverseProxy{
+			Director: director,
+			Transport: &http.Transport{
+				TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+			},
+		}
+	}
 	return &httputil.ReverseProxy{
 		Director: director,
-		Transport: &http.Transport{
-			TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
-		},
 	}
 }
 
