@@ -4,6 +4,7 @@ package main
 
 import (
 	"bytes"
+	"crypto/tls"
 	"fmt"
 	"io"
 	"io/ioutil"
@@ -102,10 +103,19 @@ func (proxy *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Strict-Transport-Security", "max-age=31536000; includeSubDomains; preload")
 	result, ok := proxy.hostMap.Load(r.Host)
 	if ok {
+		// Found a handler so serve
 		handler := result.(*ProxyHandler)
 		handler.Handler.ServeHTTP(w, r)
 	} else {
-		http.Error(w, "Not found", 404)
+		// Hostname doesn't match so try wildcard
+		result, ok = proxy.hostMap.Load("any")
+		if ok {
+			// Found a wildcard handler
+			handler := result.(*ProxyHandler)
+			handler.Handler.ServeHTTP(w, r)
+		} else {
+			http.Error(w, "Not found", 404)
+		}
 	}
 }
 
@@ -117,14 +127,15 @@ type ProxyHandler struct {
 }
 
 type runArgs struct {
-	Addr    string `flag:"addr,address to listen at"`
-	Conf    string `flag:"map,file with host/backend mapping"`
-	Cache   string `flag:"cacheDir,path to directory to cache key and certificates"`
-	HSTS    bool   `flag:"hsts,add Strict-Transport-Security header"`
-	Email   string `flag:"email,contact email address presented to letsencrypt CA"`
-	HTTP    string `flag:"http,optional address to serve http-to-https redirects and ACME http-01 challenge responses"`
-	Install bool   `flag:"install,installs as a windows service"`
-	Remove  bool   `flag:"remove,removes the windows service"`
+	Addr     string `flag:"addr,address to listen at"`
+	HTTPOnly bool   `flag:"httponly,only use http"`
+	Conf     string `flag:"map,file with host/backend mapping"`
+	Cache    string `flag:"cacheDir,path to directory to cache key and certificates"`
+	HSTS     bool   `flag:"hsts,add Strict-Transport-Security header"`
+	Email    string `flag:"email,contact email address presented to letsencrypt CA"`
+	HTTP     string `flag:"http,optional address to serve http-to-https redirects and ACME http-01 challenge responses"`
+	Install  bool   `flag:"install,installs as a windows service"`
+	Remove   bool   `flag:"remove,removes the windows service"`
 
 	RTo  time.Duration `flag:"rto,maximum duration before timing out read of the request"`
 	WTo  time.Duration `flag:"wto,maximum duration before timing out write of the response"`
@@ -160,7 +171,8 @@ func run() error {
 	if args.Cache == "" {
 		return fmt.Errorf("no cache specified")
 	}
-	srv, httpHandler, err := setupServer(args.Addr, args.Cache, args.Email, args.HSTS)
+
+	srv, httpHandler, err := setupServer(args.Addr, args.Cache, args.Email, args.HSTS, args.HTTPOnly)
 	if err != nil {
 		return err
 	}
@@ -201,6 +213,11 @@ func run() error {
 		return err
 	}
 
+	if args.HTTPOnly {
+		// Serve http only
+		return srv.ListenAndServe()
+	}
+
 	if args.HTTP != "" {
 		go func(addr string) {
 			srv := http.Server{
@@ -225,20 +242,27 @@ func run() error {
 	return srv.ServeTLS(ln, "", "")
 }
 
-func setupServer(addr, cacheDir, email string, hsts bool) (*http.Server, http.Handler, error) {
+func setupServer(addr, cacheDir, email string, hsts, httponly bool) (*http.Server, http.Handler, error) {
 	mapping, err := readMapping(args.Conf)
 	if err != nil {
 		return nil, nil, err
+	}
+	err = loadProxies(mapping)
+	if err != nil {
+		return nil, nil, err
+	}
+	if httponly {
+		srv := &http.Server{
+			Handler: &proxy,
+			Addr:    addr,
+		}
+		return srv, nil, nil
 	}
 	certs = autocert.Manager{
 		Prompt:     autocert.AcceptTOS,
 		Cache:      autocert.DirCache(cacheDir),
 		HostPolicy: autocert.HostWhitelist(keys(mapping)...),
 		Email:      email,
-	}
-	err = loadProxies(mapping)
-	if err != nil {
-		return nil, nil, err
 	}
 	if err := os.MkdirAll(cacheDir, 0700); err != nil {
 		return nil, nil, fmt.Errorf("cannot create cache directory %q: %v", cacheDir, err)
@@ -377,7 +401,12 @@ func newSingleHostReverseProxy(target *url.URL) *httputil.ReverseProxy {
 		}
 		req.Header.Set("X-Forwarded-Proto", "https")
 	}
-	return &httputil.ReverseProxy{Director: director}
+	return &httputil.ReverseProxy{
+		Director: director,
+		Transport: &http.Transport{
+			TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+		},
+	}
 }
 
 func singleJoiningSlash(a, b string) string {
