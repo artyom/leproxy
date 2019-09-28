@@ -216,6 +216,7 @@ func run() error {
 
 	if args.HTTPOnly {
 		// Serve http only
+		log.Printf("Running on http only %s", args.Addr)
 		return srv.ListenAndServe()
 	}
 
@@ -227,10 +228,12 @@ func run() error {
 				ReadTimeout:  10 * time.Second,
 				WriteTimeout: 10 * time.Second,
 			}
+			log.Print("Running http redirect")
 			log.Fatal(srv.ListenAndServe()) // TODO: should return err from run, not exit like this
 		}(args.HTTP)
 	}
 	if srv.ReadTimeout != 0 || srv.WriteTimeout != 0 || args.Idle == 0 {
+		log.Printf("Running https only %s", args.Addr)
 		return srv.ListenAndServeTLS("", "")
 	}
 	ln, err := net.Listen("tcp", srv.Addr)
@@ -238,6 +241,7 @@ func run() error {
 		return err
 	}
 	defer ln.Close()
+	log.Print("Running tcp listener")
 	ln = tcpKeepAliveListener{d: args.Idle,
 		TCPListener: ln.(*net.TCPListener)}
 	return srv.ServeTLS(ln, "", "")
