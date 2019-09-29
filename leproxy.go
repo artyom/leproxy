@@ -284,7 +284,11 @@ func loadProxies(mapping map[string]string) error {
 		} else if u, err := url.Parse(backendAddr); err == nil {
 			switch u.Scheme {
 			case "http", "https":
-				rp := newSingleHostReverseProxy(u)
+				prefix := ""
+				if strings.HasPrefix(hostname, "/") {
+					prefix = hostname
+				}
+				rp := newSingleHostReverseProxy(u, prefix)
 				rp.ErrorLog = log.New(ioutil.Discard, "", 0)
 				rp.BufferPool = bufPool{}
 				proxy.Handle(hostname, &ProxyHandler{
@@ -355,12 +359,12 @@ var bufferPool = &sync.Pool{
 
 // newSingleHostReverseProxy is a copy of httputil.NewSingleHostReverseProxy
 // with addition of "X-Forwarded-Proto" header.
-func newSingleHostReverseProxy(target *url.URL) *httputil.ReverseProxy {
+func newSingleHostReverseProxy(target *url.URL, prefix string) *httputil.ReverseProxy {
 	targetQuery := target.RawQuery
 	director := func(req *http.Request) {
 		req.URL.Scheme = target.Scheme
 		req.URL.Host = target.Host
-		req.URL.Path = singleJoiningSlash(target.Path, req.URL.Path)
+		req.URL.Path = singleJoiningSlash(target.Path, req.URL.Path[len(prefix):])
 		if targetQuery == "" || req.URL.RawQuery == "" {
 			req.URL.RawQuery = targetQuery + req.URL.RawQuery
 		} else {
@@ -454,22 +458,36 @@ func (proxy *Proxy) Exists(host, target string) bool {
 	return item.(*ProxyHandler).TargetName == target
 }
 
+// ServeHTTP finds the handler if one exists and then returns the result
 func (proxy *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Strict-Transport-Security", "max-age=31536000; includeSubDomains; preload")
+	// Match to hostname
 	result, ok := proxy.hostMap.Load(r.Host)
 	if ok {
 		// Found a handler so serve
 		handler := result.(*ProxyHandler)
 		handler.Handler.ServeHTTP(w, r)
-	} else {
-		// Hostname doesn't match so try wildcard
-		result, ok = proxy.hostMap.Load("any")
+		return
+	}
+	// Match against the path prefix
+	url := strings.Split(r.RequestURI, "/")
+	if len(url) > 1 {
+		result, ok = proxy.hostMap.Load("/" + url[1])
 		if ok {
-			// Found a wildcard handler
+			// Found a handler so serve
 			handler := result.(*ProxyHandler)
 			handler.Handler.ServeHTTP(w, r)
-		} else {
-			http.Error(w, "Not found", 404)
+			return
 		}
 	}
+	// Hostname doesn't match so try wildcard
+	result, ok = proxy.hostMap.Load("any")
+	if ok {
+		// Found a wildcard handler
+		handler := result.(*ProxyHandler)
+		handler.Handler.ServeHTTP(w, r)
+	} else {
+		http.Error(w, "Not found", 404)
+	}
+
 }
