@@ -41,6 +41,38 @@ var (
 	certs autocert.Manager
 )
 
+// ProxyHandler holds the info and handler of each proxy
+type ProxyHandler struct {
+	HostName   string
+	TargetName string
+	Handler    http.Handler
+}
+
+type bufPool struct{}
+type program struct{}
+
+// Proxy contains and servers the handlers for each hostname
+type Proxy struct {
+	hostMap sync.Map
+}
+
+type runArgs struct {
+	Addr          string `flag:"addr,address to listen at"`
+	HTTPOnly      bool   `flag:"http-only,only use http"`
+	TLSSkipVerify bool   `flag:"tls-skip-verify,only use http"`
+	Conf          string `flag:"map,file with host/backend mapping"`
+	Cache         string `flag:"cacheDir,path to directory to cache key and certificates"`
+	HSTS          bool   `flag:"hsts,add Strict-Transport-Security header"`
+	Email         string `flag:"email,contact email address presented to letsencrypt CA"`
+	HTTP          string `flag:"http,optional address to serve http-to-https redirects and ACME http-01 challenge responses"`
+	Install       bool   `flag:"install,installs as a windows service"`
+	Remove        bool   `flag:"remove,removes the windows service"`
+
+	RTo  time.Duration `flag:"rto,maximum duration before timing out read of the request"`
+	WTo  time.Duration `flag:"wto,maximum duration before timing out write of the response"`
+	Idle time.Duration `flag:"idle,how long idle connection is kept before closing (set rto, wto to 0 to use this)"`
+}
+
 func main() {
 
 	autoflags.Parse(&args)
@@ -79,71 +111,6 @@ func main() {
 	}
 
 }
-
-// Proxy contains and servers the handlers for each hostname
-type Proxy struct {
-	hostMap sync.Map
-}
-
-// Handle adds a handler if it doesn't exist
-func (proxy *Proxy) Handle(host string, handler *ProxyHandler) {
-	proxy.hostMap.Store(host, handler)
-}
-
-// Exists returns whether there is an
-func (proxy *Proxy) Exists(host, target string) bool {
-	item, ok := proxy.hostMap.Load(host)
-	if !ok {
-		return false
-	}
-	return item.(*ProxyHandler).TargetName == target
-}
-
-func (proxy *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Strict-Transport-Security", "max-age=31536000; includeSubDomains; preload")
-	result, ok := proxy.hostMap.Load(r.Host)
-	if ok {
-		// Found a handler so serve
-		handler := result.(*ProxyHandler)
-		handler.Handler.ServeHTTP(w, r)
-	} else {
-		// Hostname doesn't match so try wildcard
-		result, ok = proxy.hostMap.Load("any")
-		if ok {
-			// Found a wildcard handler
-			handler := result.(*ProxyHandler)
-			handler.Handler.ServeHTTP(w, r)
-		} else {
-			http.Error(w, "Not found", 404)
-		}
-	}
-}
-
-// ProxyHandler holds the info and handler of each proxy
-type ProxyHandler struct {
-	HostName   string
-	TargetName string
-	Handler    http.Handler
-}
-
-type runArgs struct {
-	Addr          string `flag:"addr,address to listen at"`
-	HTTPOnly      bool   `flag:"http-only,only use http"`
-	TLSSkipVerify bool   `flag:"tls-skip-verify,only use http"`
-	Conf          string `flag:"map,file with host/backend mapping"`
-	Cache         string `flag:"cacheDir,path to directory to cache key and certificates"`
-	HSTS          bool   `flag:"hsts,add Strict-Transport-Security header"`
-	Email         string `flag:"email,contact email address presented to letsencrypt CA"`
-	HTTP          string `flag:"http,optional address to serve http-to-https redirects and ACME http-01 challenge responses"`
-	Install       bool   `flag:"install,installs as a windows service"`
-	Remove        bool   `flag:"remove,removes the windows service"`
-
-	RTo  time.Duration `flag:"rto,maximum duration before timing out read of the request"`
-	WTo  time.Duration `flag:"wto,maximum duration before timing out write of the response"`
-	Idle time.Duration `flag:"idle,how long idle connection is kept before closing (set rto, wto to 0 to use this)"`
-}
-
-type program struct{}
 
 func (p *program) Start(s service.Service) error {
 	// Set the working directory to be the current one
@@ -377,8 +344,6 @@ func keys(m map[string]string) []string {
 	return out
 }
 
-type bufPool struct{}
-
 func (bp bufPool) Get() []byte  { return bufferPool.Get().([]byte) }
 func (bp bufPool) Put(b []byte) { bufferPool.Put(b) }
 
@@ -473,4 +438,38 @@ func (c timeoutConn) Write(b []byte) (int, error) {
 		_ = c.TCPConn.SetDeadline(time.Now().Add(c.d))
 	}
 	return n, err
+}
+
+// Handle adds a handler if it doesn't exist
+func (proxy *Proxy) Handle(host string, handler *ProxyHandler) {
+	proxy.hostMap.Store(host, handler)
+}
+
+// Exists returns whether there is an
+func (proxy *Proxy) Exists(host, target string) bool {
+	item, ok := proxy.hostMap.Load(host)
+	if !ok {
+		return false
+	}
+	return item.(*ProxyHandler).TargetName == target
+}
+
+func (proxy *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Strict-Transport-Security", "max-age=31536000; includeSubDomains; preload")
+	result, ok := proxy.hostMap.Load(r.Host)
+	if ok {
+		// Found a handler so serve
+		handler := result.(*ProxyHandler)
+		handler.Handler.ServeHTTP(w, r)
+	} else {
+		// Hostname doesn't match so try wildcard
+		result, ok = proxy.hostMap.Load("any")
+		if ok {
+			// Found a wildcard handler
+			handler := result.(*ProxyHandler)
+			handler.Handler.ServeHTTP(w, r)
+		} else {
+			http.Error(w, "Not found", 404)
+		}
+	}
 }
