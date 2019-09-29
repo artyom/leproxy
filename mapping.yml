@@ -1,0 +1,10 @@
+# Examples
+#subdomain1.example.com: 127.0.0.1:8080
+#subdomain2.example.com: /var/run/http.socket
+#subdomain3.example.com: @abstractUnixSocket
+#uploads.example.com: https://uploads-bucket.s3.amazonaws.com
+#static.example.com: /var/www/
+#/prod: https://prodserver/api/v1
+#/dev: https://devserver/api/v1
+#any: https://localhost:8883/api/v1
+any: https://localhost:8883/api/v1
