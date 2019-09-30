@@ -341,9 +341,12 @@ func readMapping(file string) (map[string]string, error) {
 }
 
 func keys(m map[string]string) []string {
-	out := make([]string, 0, len(m))
+	out := []string{}
 	for k := range m {
-		out = append(out, k)
+		if k != "any" || strings.HasPrefix(k, "/") {
+			// Get the hostnames ignoring the any and prefixes
+			out = append(out, k)
+		}
 	}
 	return out
 }
