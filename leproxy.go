@@ -63,6 +63,7 @@ type runArgs struct {
 	Conf          string `flag:"map,file with host/backend mapping"`
 	Cache         string `flag:"cacheDir,path to directory to cache key and certificates"`
 	HSTS          bool   `flag:"hsts,add Strict-Transport-Security header"`
+	HostName      string `flag:"hostname,the default host name to be used with any and / prefix options"`
 	Email         string `flag:"email,contact email address presented to letsencrypt CA"`
 	HTTP          string `flag:"http,optional address to serve http-to-https redirects and ACME http-01 challenge responses"`
 	Install       bool   `flag:"install,installs as a windows service"`
@@ -233,7 +234,7 @@ func setupServer(addr, cacheDir, email string, hsts, httponly bool) (*http.Serve
 	certs = autocert.Manager{
 		Prompt:     autocert.AcceptTOS,
 		Cache:      autocert.DirCache(cacheDir),
-		HostPolicy: autocert.HostWhitelist(keys(mapping)...),
+		HostPolicy: autocert.HostWhitelist(hostnames(mapping)...),
 		Email:      email,
 	}
 	if err := os.MkdirAll(cacheDir, 0700); err != nil {
@@ -252,7 +253,7 @@ func loadProxies(mapping map[string]string) error {
 		return fmt.Errorf("empty mapping")
 	}
 	// Update the host policy with any new hosts
-	certs.HostPolicy = autocert.HostWhitelist(keys(mapping)...)
+	certs.HostPolicy = autocert.HostWhitelist(hostnames(mapping)...)
 	// Add the each mapping
 	for hostname, backendAddr := range mapping {
 		hostname, backendAddr := hostname, backendAddr // intentional shadowing
@@ -340,8 +341,11 @@ func readMapping(file string) (map[string]string, error) {
 	return m, nil
 }
 
-func keys(m map[string]string) []string {
+func hostnames(m map[string]string) []string {
 	out := []string{}
+	if args.HostName != "" {
+		out = append(out, args.HostName)
+	}
 	for k := range m {
 		if k != "any" || strings.HasPrefix(k, "/") {
 			// Get the hostnames ignoring the any and prefixes
