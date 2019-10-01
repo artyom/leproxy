@@ -22,8 +22,9 @@ import (
 
 	"github.com/artyom/autoflags"
 	"github.com/fsnotify/fsnotify"
+	"github.com/joho/godotenv"
 	"github.com/kardianos/service"
-	"golang.org/x/crypto/acme/autocert"
+	"github.com/mholt/certmagic"
 	yaml "gopkg.in/yaml.v2"
 )
 
@@ -38,7 +39,6 @@ var args = runArgs{
 
 var (
 	proxy = Proxy{}
-	certs autocert.Manager
 )
 
 // ProxyHandler holds the info and handler of each proxy
@@ -137,20 +137,22 @@ func (p *program) run() {
 
 func run() error {
 
-	if args.Cache == "" {
-		return fmt.Errorf("no cache specified")
+	if !args.HTTPOnly && args.Email == "" {
+		log.Fatal("An email must be provided for Let's Encrypt validation")
 	}
 
-	srv, httpHandler, err := setupServer(args.Addr, args.Cache, args.Email, args.HSTS, args.HTTPOnly)
+	err := godotenv.Load()
+	if !os.IsNotExist(err) && err != nil {
+		log.Fatal("Error loading .env file")
+	}
+
+	mapping, err := readMapping(args.Conf)
 	if err != nil {
 		return err
 	}
-	srv.ReadHeaderTimeout = 5 * time.Second
-	if args.RTo > 0 {
-		srv.ReadTimeout = args.RTo
-	}
-	if args.WTo > 0 {
-		srv.WriteTimeout = args.WTo
+	err = loadProxies(mapping)
+	if err != nil {
+		return err
 	}
 
 	watcher, err := fsnotify.NewWatcher()
@@ -185,75 +187,27 @@ func run() error {
 	if args.HTTPOnly {
 		// Serve http only
 		log.Printf("Running on http only %s", args.Addr)
+		srv := &http.Server{
+			Handler: &proxy,
+			Addr:    args.Addr,
+		}
 		return srv.ListenAndServe()
 	}
 
-	if args.HTTP != "" {
-		go func(addr string) {
-			srv := http.Server{
-				Addr:         addr,
-				Handler:      httpHandler,
-				ReadTimeout:  10 * time.Second,
-				WriteTimeout: 10 * time.Second,
-			}
-			log.Print("Running http redirect")
-			log.Fatal(srv.ListenAndServe()) // TODO: should return err from run, not exit like this
-		}(args.HTTP)
-	}
-	if srv.ReadTimeout != 0 || srv.WriteTimeout != 0 || args.Idle == 0 {
-		log.Printf("Running https only %s", args.Addr)
-		return srv.ListenAndServeTLS("", "")
-	}
-	ln, err := net.Listen("tcp", srv.Addr)
-	if err != nil {
-		return err
-	}
-	defer ln.Close()
-	log.Print("Running tcp listener")
-	ln = tcpKeepAliveListener{d: args.Idle,
-		TCPListener: ln.(*net.TCPListener)}
-	return srv.ServeTLS(ln, "", "")
-}
+	// read and agree to your CA's legal documents
+	certmagic.Default.Agreed = true
 
-func setupServer(addr, cacheDir, email string, hsts, httponly bool) (*http.Server, http.Handler, error) {
-	mapping, err := readMapping(args.Conf)
-	if err != nil {
-		return nil, nil, err
-	}
-	err = loadProxies(mapping)
-	if err != nil {
-		return nil, nil, err
-	}
-	if httponly {
-		srv := &http.Server{
-			Handler: &proxy,
-			Addr:    addr,
-		}
-		return srv, nil, nil
-	}
-	certs = autocert.Manager{
-		Prompt:     autocert.AcceptTOS,
-		Cache:      autocert.DirCache(cacheDir),
-		HostPolicy: autocert.HostWhitelist(hostnames(mapping)...),
-		Email:      email,
-	}
-	if err := os.MkdirAll(cacheDir, 0700); err != nil {
-		return nil, nil, fmt.Errorf("cannot create cache directory %q: %v", cacheDir, err)
-	}
-	srv := &http.Server{
-		Handler:   &proxy,
-		Addr:      addr,
-		TLSConfig: certs.TLSConfig(),
-	}
-	return srv, certs.HTTPHandler(nil), nil
+	// provide an email address
+	certmagic.Default.Email = args.Email
+
+	return certmagic.HTTPS(hostnames(mapping), &proxy)
+
 }
 
 func loadProxies(mapping map[string]string) error {
 	if len(mapping) == 0 {
 		return fmt.Errorf("empty mapping")
 	}
-	// Update the host policy with any new hosts
-	certs.HostPolicy = autocert.HostWhitelist(hostnames(mapping)...)
 	// Add the each mapping
 	for hostname, backendAddr := range mapping {
 		hostname, backendAddr := hostname, backendAddr // intentional shadowing
