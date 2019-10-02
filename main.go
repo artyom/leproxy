@@ -28,17 +28,6 @@ import (
 	yaml "gopkg.in/yaml.v2"
 )
 
-var args = runArgs{
-	Addr:  ":https",
-	HTTP:  ":http",
-	Conf:  "mapping.yml",
-	Cache: cachePath(),
-}
-
-var (
-	proxy = Proxy{}
-)
-
 // ProxyHandler holds the info and handler of each proxy
 type ProxyHandler struct {
 	HostName   string
@@ -53,12 +42,6 @@ type bufPool struct{}
 func (bp bufPool) Get() []byte  { return bufferPool.Get().([]byte) }
 func (bp bufPool) Put(b []byte) { bufferPool.Put(b) }
 
-var bufferPool = &sync.Pool{
-	New: func() interface{} {
-		return make([]byte, 32*1024)
-	},
-}
-
 type runArgs struct {
 	Addr          string `flag:"addr,address to listen at"`
 	HTTPOnly      bool   `flag:"http-only,only use http"`
@@ -72,6 +55,21 @@ type runArgs struct {
 	Install       bool   `flag:"install,installs as a windows service"`
 	Remove        bool   `flag:"remove,removes the windows service"`
 }
+
+var (
+	args = runArgs{
+		Addr:  ":https",
+		HTTP:  ":http",
+		Conf:  "mapping.yml",
+		Cache: cachePath(),
+	}
+	proxy      = Proxy{}
+	bufferPool = &sync.Pool{
+		New: func() interface{} {
+			return make([]byte, 32*1024)
+		},
+	}
+)
 
 func main() {
 
