@@ -206,7 +206,7 @@ func run() error {
 			select {
 			// watch for events
 			case event := <-watcher.Events:
-				fmt.Println(event.Name, event.Op)
+				log.Printf("%s updated, reloading mapping", event.Name)
 				mapping, err := readMapping(args.MappingPath)
 				if err != nil {
 					fmt.Println("ERROR", event.Name, event.Op, err)
