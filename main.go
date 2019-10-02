@@ -1,5 +1,3 @@
-// Command leproxy implements https reverse proxy with automatic Letsencrypt usage for multiple
-// hostnames/backends
 package main
 
 import (
@@ -43,25 +41,24 @@ func (bp bufPool) Get() []byte  { return bufferPool.Get().([]byte) }
 func (bp bufPool) Put(b []byte) { bufferPool.Put(b) }
 
 type runArgs struct {
-	Addr          string `flag:"addr,address to listen at"`
-	HTTPOnly      bool   `flag:"http-only,only use http"`
-	TLSSkipVerify bool   `flag:"tls-skip-verify,only use http"`
-	Conf          string `flag:"map,file with host/backend mapping"`
-	Cache         string `flag:"cacheDir,path to directory to cache key and certificates"`
-	HSTS          bool   `flag:"hsts,add Strict-Transport-Security header"`
-	HostName      string `flag:"hostname,the default host name to be used with any and / prefix options"`
-	Email         string `flag:"email,contact email address presented to letsencrypt CA"`
-	HTTP          string `flag:"http,optional address to serve http-to-https redirects and ACME http-01 challenge responses"`
-	Install       bool   `flag:"install,installs as a windows service"`
-	Remove        bool   `flag:"remove,removes the windows service"`
+	Addr          string `flag:"addr,Address to listen at"`
+	HTTP          string `flag:"http,Optional address to serve http-to-https redirects and ACME http-01 challenge responses"`
+	MappingPath   string `flag:"mapping,File with host/backend mapping"`
+	CacheDir      string `flag:"cache-dir,Path to directory to cache key and certificates"`
+	HTTPOnly      bool   `flag:"http-only,Only use http"`
+	TLSSkipVerify bool   `flag:"tls-skip-verify,Skip verification of SSL certs for proxy targets"`
+	HSTS          bool   `flag:"hsts,Add Strict-Transport-Security header"`
+	HostName      string `flag:"hostname,The default host name to be used with any and / prefix options"`
+	Email         string `flag:"email,Contact email address presented to letsencrypt CA"`
+	Install       bool   `flag:"install,Installs as a windows service"`
+	Remove        bool   `flag:"remove,Removes the windows service"`
 }
 
 var (
 	args = runArgs{
-		Addr:  ":https",
-		HTTP:  ":http",
-		Conf:  "mapping.yml",
-		Cache: cachePath(),
+		Addr:     ":https",
+		HTTP:     ":http",
+		CacheDir: cachePath(),
 	}
 	proxy      = Proxy{}
 	bufferPool = &sync.Pool{
@@ -73,12 +70,51 @@ var (
 
 func main() {
 
+	// Get teh working directory
+	wd, err := filepath.Abs(filepath.Dir(os.Args[0]))
+	if err != nil {
+		log.Fatalf("Unable to get working directory: %s", err.Error())
+		return
+	}
+
+	args.MappingPath = filepath.Join(wd, "mapping.yml")
+
 	autoflags.Parse(&args)
 
+	// Add the arguments to Windows services
+	serviceArgs := []string{
+		"-addr",
+		args.Addr,
+		"-http",
+		args.HTTP,
+		"-conf",
+		fmt.Sprintf("\"%s\"", args.MappingPath),
+		"-cache-dir",
+		fmt.Sprintf("\"%s\"", args.CacheDir),
+	}
+	if args.HTTPOnly {
+		serviceArgs = append(serviceArgs, "-http-only")
+	}
+	if args.TLSSkipVerify {
+		serviceArgs = append(serviceArgs, "-tls-skip-verify")
+	}
+	if args.HSTS {
+		serviceArgs = append(serviceArgs, "-hsts")
+	}
+	if args.HostName != "" {
+		serviceArgs = append(serviceArgs, "-hostname")
+		serviceArgs = append(serviceArgs, args.HostName)
+	}
+	if args.Email != "" {
+		serviceArgs = append(serviceArgs, "-email")
+		serviceArgs = append(serviceArgs, args.Email)
+	}
+
 	svcConfig := &service.Config{
-		Name:        "leproxy",
-		DisplayName: "Let's Encrypt Proxy",
+		Name:        "sweetssl",
+		DisplayName: "Sweet SSL",
 		Description: "Provides a reverse proxy with Let's Encrypt SSL support",
+		Arguments:   serviceArgs,
 	}
 
 	prg := &program{}
@@ -143,7 +179,12 @@ func run() error {
 		log.Fatal("Error loading .env file")
 	}
 
-	mapping, err := readMapping(args.Conf)
+	err = godotenv.Load("env")
+	if !os.IsNotExist(err) && err != nil {
+		log.Fatal("Error loading .env file")
+	}
+
+	mapping, err := readMapping(args.MappingPath)
 	if err != nil {
 		return err
 	}
@@ -164,7 +205,7 @@ func run() error {
 			// watch for events
 			case event := <-watcher.Events:
 				fmt.Println(event.Name, event.Op)
-				mapping, err := readMapping(args.Conf)
+				mapping, err := readMapping(args.MappingPath)
 				if err != nil {
 					fmt.Println("ERROR", event.Name, event.Op, err)
 				} else {
@@ -177,7 +218,7 @@ func run() error {
 	}()
 
 	// Watch the mapping file....
-	if err := watcher.Add(args.Conf); err != nil {
+	if err := watcher.Add(args.MappingPath); err != nil {
 		return err
 	}
 
@@ -191,11 +232,14 @@ func run() error {
 		return srv.ListenAndServe()
 	}
 
-	// read and agree to your CA's legal documents
+	// Read and agree to your CA's legal documents
 	certmagic.Default.Agreed = true
 
-	// provide an email address
+	// Provide an email address
 	certmagic.Default.Email = args.Email
+
+	// Set the cache path
+	certmagic.Default.Storage = &certmagic.FileStorage{Path: args.CacheDir}
 
 	return certmagic.HTTPS(hostnames(mapping), &proxy)
 

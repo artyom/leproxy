@@ -1,5 +1,5 @@
 package main
 
 func cachePath() string {
-	return "/var/cache/letsencrypt"
+	return "/var/cache/sweetssl"
 }
