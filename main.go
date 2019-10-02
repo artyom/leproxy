@@ -66,6 +66,7 @@ var (
 			return make([]byte, 32*1024)
 		},
 	}
+	proxyCounter int
 )
 
 func main() {
@@ -84,9 +85,9 @@ func main() {
 	// Add the arguments to Windows services
 	serviceArgs := []string{
 		"-addr",
-		args.Addr,
+		fmt.Sprintf("\"%s\"", args.Addr),
 		"-http",
-		args.HTTP,
+		fmt.Sprintf("\"%s\"", args.HTTP),
 		"-conf",
 		fmt.Sprintf("\"%s\"", args.MappingPath),
 		"-cache-dir",
@@ -188,6 +189,7 @@ func run() error {
 	if err != nil {
 		return err
 	}
+
 	err = loadProxies(mapping)
 	if err != nil {
 		return err
@@ -250,14 +252,17 @@ func loadProxies(mapping map[string]string) error {
 		return fmt.Errorf("empty mapping")
 	}
 	// Add the each mapping
+	proxyCounter = 0
 	for hostname, backendAddr := range mapping {
 		hostname, backendAddr := hostname, backendAddr // intentional shadowing
 		if proxy.Exists(hostname, backendAddr) {
 			// The handler already exists and hasn't changed
+			proxyCounter++
 			continue
 		}
 		if strings.ContainsRune(hostname, os.PathSeparator) {
-			return fmt.Errorf("invalid hostname: %q", hostname)
+			log.Printf("Invalid hostname: %s", hostname)
+			continue
 		}
 		network := "tcp"
 		if backendAddr != "" && backendAddr[0] == '@' && runtime.GOOS == "linux" {
@@ -267,7 +272,7 @@ func loadProxies(mapping map[string]string) error {
 			network, backendAddr = "unix", backendAddr+string(0)
 		} else if filepath.IsAbs(backendAddr) {
 			network = "unix"
-			if strings.HasSuffix(backendAddr, string(os.PathSeparator)) {
+			if strings.HasSuffix(strings.Trim(backendAddr, ""), string(os.PathSeparator)) {
 				// path specified as directory with explicit trailing
 				// slash; add this path as static site
 				proxy.Handle(hostname, &ProxyHandler{
@@ -275,6 +280,7 @@ func loadProxies(mapping map[string]string) error {
 					TargetName: backendAddr,
 					Handler:    http.FileServer(http.Dir(backendAddr)),
 				})
+				proxyCounter++
 				continue
 			}
 		} else if u, err := url.Parse(backendAddr); err == nil {
@@ -292,6 +298,7 @@ func loadProxies(mapping map[string]string) error {
 					TargetName: backendAddr,
 					Handler:    rp,
 				})
+				proxyCounter++
 				continue
 			}
 		}
@@ -314,7 +321,9 @@ func loadProxies(mapping map[string]string) error {
 			TargetName: backendAddr,
 			Handler:    rp,
 		})
+		proxyCounter++
 	}
+	log.Printf("%v mappings have been loaded", proxyCounter)
 	return nil
 }
 

@@ -3,8 +3,9 @@
 #subdomain2.example.com: /var/run/http.socket
 #subdomain3.example.com: @abstractUnixSocket
 #uploads.example.com: https://uploads-bucket.s3.amazonaws.com
-#static.example.com: /var/www/
+#static.linux.com: /var/www/
+#static.windows.com: C:\Temp\
 #/prod: https://prodserver/api/v1
 #/dev: https://devserver/api/v1
 #any: https://localhost:8883/api/v1
-any: https://localhost:8883/api/v1
+any: C:\Temp\
