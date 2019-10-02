@@ -33,8 +33,6 @@ var args = runArgs{
 	HTTP:  ":http",
 	Conf:  "mapping.yml",
 	Cache: cachePath(),
-	RTo:   time.Minute,
-	WTo:   5 * time.Minute,
 }
 
 var (
@@ -48,8 +46,18 @@ type ProxyHandler struct {
 	Handler    http.Handler
 }
 
-type bufPool struct{}
 type program struct{}
+
+type bufPool struct{}
+
+func (bp bufPool) Get() []byte  { return bufferPool.Get().([]byte) }
+func (bp bufPool) Put(b []byte) { bufferPool.Put(b) }
+
+var bufferPool = &sync.Pool{
+	New: func() interface{} {
+		return make([]byte, 32*1024)
+	},
+}
 
 type runArgs struct {
 	Addr          string `flag:"addr,address to listen at"`
@@ -63,10 +71,6 @@ type runArgs struct {
 	HTTP          string `flag:"http,optional address to serve http-to-https redirects and ACME http-01 challenge responses"`
 	Install       bool   `flag:"install,installs as a windows service"`
 	Remove        bool   `flag:"remove,removes the windows service"`
-
-	RTo  time.Duration `flag:"rto,maximum duration before timing out read of the request"`
-	WTo  time.Duration `flag:"wto,maximum duration before timing out write of the response"`
-	Idle time.Duration `flag:"idle,how long idle connection is kept before closing (set rto, wto to 0 to use this)"`
 }
 
 func main() {
@@ -302,15 +306,6 @@ func hostnames(m map[string]string) []string {
 		}
 	}
 	return out
-}
-
-func (bp bufPool) Get() []byte  { return bufferPool.Get().([]byte) }
-func (bp bufPool) Put(b []byte) { bufferPool.Put(b) }
-
-var bufferPool = &sync.Pool{
-	New: func() interface{} {
-		return make([]byte, 32*1024)
-	},
 }
 
 // newSingleHostReverseProxy is a copy of httputil.NewSingleHostReverseProxy
