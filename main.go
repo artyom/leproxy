@@ -51,11 +51,6 @@ type ProxyHandler struct {
 type bufPool struct{}
 type program struct{}
 
-// Proxy contains and servers the handlers for each hostname
-type Proxy struct {
-	hostMap sync.Map
-}
-
 type runArgs struct {
 	Addr          string `flag:"addr,address to listen at"`
 	HTTPOnly      bool   `flag:"http-only,only use http"`
@@ -359,96 +354,4 @@ func singleJoiningSlash(a, b string) string {
 		return a + "/" + b
 	}
 	return a + b
-}
-
-// tcpKeepAliveListener sets TCP keep-alive timeouts on accepted
-// connections. It's used by ListenAndServe and ListenAndServeTLS so
-// dead TCP connections (e.g. closing laptop mid-download) eventually
-// go away.
-type tcpKeepAliveListener struct {
-	d time.Duration
-	*net.TCPListener
-}
-
-func (ln tcpKeepAliveListener) Accept() (net.Conn, error) {
-	tc, err := ln.AcceptTCP()
-	if err != nil {
-		return nil, err
-	}
-	tc.SetKeepAlive(true)
-	tc.SetKeepAlivePeriod(3 * time.Minute)
-	if ln.d == 0 {
-		return tc, nil
-	}
-	return timeoutConn{d: ln.d, TCPConn: tc}, nil
-}
-
-// timeoutConn extends deadline after successful read or write operations
-type timeoutConn struct {
-	d time.Duration
-	*net.TCPConn
-}
-
-func (c timeoutConn) Read(b []byte) (int, error) {
-	n, err := c.TCPConn.Read(b)
-	if err == nil {
-		_ = c.TCPConn.SetDeadline(time.Now().Add(c.d))
-	}
-	return n, err
-}
-
-func (c timeoutConn) Write(b []byte) (int, error) {
-	n, err := c.TCPConn.Write(b)
-	if err == nil {
-		_ = c.TCPConn.SetDeadline(time.Now().Add(c.d))
-	}
-	return n, err
-}
-
-// Handle adds a handler if it doesn't exist
-func (proxy *Proxy) Handle(host string, handler *ProxyHandler) {
-	proxy.hostMap.Store(host, handler)
-}
-
-// Exists returns whether there is an
-func (proxy *Proxy) Exists(host, target string) bool {
-	item, ok := proxy.hostMap.Load(host)
-	if !ok {
-		return false
-	}
-	return item.(*ProxyHandler).TargetName == target
-}
-
-// ServeHTTP finds the handler if one exists and then returns the result
-func (proxy *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Strict-Transport-Security", "max-age=31536000; includeSubDomains; preload")
-	// Match to hostname
-	result, ok := proxy.hostMap.Load(r.Host)
-	if ok {
-		// Found a handler so serve
-		handler := result.(*ProxyHandler)
-		handler.Handler.ServeHTTP(w, r)
-		return
-	}
-	// Match against the path prefix
-	url := strings.Split(r.RequestURI, "/")
-	if len(url) > 1 {
-		result, ok = proxy.hostMap.Load("/" + url[1])
-		if ok {
-			// Found a handler so serve
-			handler := result.(*ProxyHandler)
-			handler.Handler.ServeHTTP(w, r)
-			return
-		}
-	}
-	// Hostname doesn't match so try wildcard
-	result, ok = proxy.hostMap.Load("any")
-	if ok {
-		// Found a wildcard handler
-		handler := result.(*ProxyHandler)
-		handler.Handler.ServeHTTP(w, r)
-	} else {
-		http.Error(w, "Not found", 404)
-	}
-
 }
