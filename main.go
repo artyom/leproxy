@@ -183,7 +183,12 @@ func readMapping(file string) (map[string]string, error) {
 		if b := sc.Bytes(); len(b) == 0 || b[0] == '#' {
 			continue
 		}
-		s := strings.SplitN(sc.Text(), ":", 2)
+		t := sc.Text()
+		i := strings.Index(t, " #")
+		if i >= 0 {
+			t = t[:i]
+		}
+		s := strings.SplitN(t, ":", 2)
 		if len(s) != 2 {
 			return nil, fmt.Errorf("invalid line: %q", sc.Text())
 		}
