@@ -3,7 +3,6 @@
 package main
 
 import (
-	"bufio"
 	"fmt"
 	"io/ioutil"
 	"log"
@@ -20,6 +19,7 @@ import (
 
 	"github.com/artyom/autoflags"
 	"golang.org/x/crypto/acme/autocert"
+	"gopkg.in/yaml.v2"
 )
 
 func main() {
@@ -178,23 +178,15 @@ func readMapping(file string) (map[string]string, error) {
 	}
 	defer f.Close()
 	m := make(map[string]string)
-	sc := bufio.NewScanner(f)
-	for sc.Scan() {
-		if b := sc.Bytes(); len(b) == 0 || b[0] == '#' {
-			continue
-		}
-		t := sc.Text()
-		i := strings.Index(t, " #")
-		if i >= 0 {
-			t = t[:i]
-		}
-		s := strings.SplitN(t, ":", 2)
-		if len(s) != 2 {
-			return nil, fmt.Errorf("invalid line: %q", sc.Text())
-		}
-		m[strings.TrimSpace(s[0])] = strings.TrimSpace(s[1])
+	raw, err := ioutil.ReadAll(f)
+	if err != nil {
+		return nil, err
 	}
-	return m, sc.Err()
+	err = yaml.Unmarshal(raw, &m)
+	if err != nil {
+		return nil, err
+	}
+	return m, nil
 }
 
 func keys(m map[string]string) []string {

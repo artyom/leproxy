@@ -19,12 +19,13 @@ Run:
  * absolute path with trailing slash to serve files from given directory.
 
 Example:
-
-	subdomain1.example.com: 127.0.0.1:8080
-	subdomain2.example.com: /var/run/http.socket
-	subdomain3.example.com: @abstractUnixSocket
-	uploads.example.com: https://uploads-bucket.s3.amazonaws.com
-	static.example.com: /var/www/
+```yaml
+subdomain1.example.com: 127.0.0.1:8080
+subdomain2.example.com: /var/run/http.socket
+subdomain3.example.com: "@abstractUnixSocket" # double quote needed! see: https://yaml.org/spec/1.2/spec.html#id2774058
+uploads.example.com: https://uploads-bucket.s3.amazonaws.com
+static.example.com: /var/www/
+```
 
 Note that when `@name` backend is specified, connection to abstract unix socket
 is made in a manner compatible with some other implementations like uWSGI, that
