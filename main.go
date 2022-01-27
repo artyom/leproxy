@@ -133,7 +133,7 @@ func setProxy(mapping map[string]string) (http.Handler, error) {
 			// append \0 to address so addrlen for connect(2) is
 			// calculated in a way compatible with some other
 			// implementations (i.e. uwsgi)
-			network, backendAddr = "unix", backendAddr+string(0)
+			network, backendAddr = "unix", backendAddr+string(byte(0))
 		} else if filepath.IsAbs(backendAddr) {
 			network = "unix"
 			if strings.HasSuffix(backendAddr, string(os.PathSeparator)) {
