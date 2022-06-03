@@ -211,12 +211,13 @@ func (p *hstsProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 type bufPool struct{}
 
-func (bp bufPool) Get() []byte  { return bufferPool.Get().([]byte) }
-func (bp bufPool) Put(b []byte) { bufferPool.Put(b) }
+func (bp bufPool) Get() []byte  { return *(bufferPool.Get().(*[]byte)) }
+func (bp bufPool) Put(b []byte) { bufferPool.Put(&b) }
 
 var bufferPool = &sync.Pool{
 	New: func() interface{} {
-		return make([]byte, 32*1024)
+		buf := make([]byte, 32*1024)
+		return &buf
 	},
 }
 
