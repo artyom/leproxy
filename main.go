@@ -4,6 +4,7 @@ package main
 
 import (
 	"bufio"
+	"context"
 	"fmt"
 	"io/ioutil"
 	"log"
@@ -12,6 +13,7 @@ import (
 	"net/http/httputil"
 	"net/url"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -20,6 +22,7 @@ import (
 
 	"github.com/artyom/autoflags"
 	"golang.org/x/crypto/acme/autocert"
+	"golang.org/x/sync/errgroup"
 )
 
 func main() {
@@ -32,7 +35,9 @@ func main() {
 		WTo:   5 * time.Minute,
 	}
 	autoflags.Parse(&args)
-	if err := run(args); err != nil {
+	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
+	defer cancel()
+	if err := run(ctx, args); err != nil {
 		log.Fatal(err)
 	}
 }
@@ -50,7 +55,7 @@ type runArgs struct {
 	Idle time.Duration `flag:"idle,how long idle connection is kept before closing (set rto, wto to 0 to use this)"`
 }
 
-func run(args runArgs) error {
+func run(ctx context.Context, args runArgs) error {
 	if args.Cache == "" {
 		return fmt.Errorf("no cache specified")
 	}
@@ -65,28 +70,43 @@ func run(args runArgs) error {
 	if args.WTo > 0 {
 		srv.WriteTimeout = args.WTo
 	}
+	group, ctx := errgroup.WithContext(ctx)
 	if args.HTTP != "" {
-		go func(addr string) {
-			srv := http.Server{
-				Addr:         addr,
-				Handler:      httpHandler,
-				ReadTimeout:  10 * time.Second,
-				WriteTimeout: 10 * time.Second,
-			}
-			log.Fatal(srv.ListenAndServe()) // TODO: should return err from run, not exit like this
-		}(args.HTTP)
+		httpServer := http.Server{
+			Addr:         args.HTTP,
+			Handler:      httpHandler,
+			ReadTimeout:  10 * time.Second,
+			WriteTimeout: 10 * time.Second,
+		}
+		group.Go(func() error { return httpServer.ListenAndServe() })
+		group.Go(func() error {
+			<-ctx.Done()
+			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+			defer cancel()
+			return httpServer.Shutdown(ctx)
+		})
 	}
 	if srv.ReadTimeout != 0 || srv.WriteTimeout != 0 || args.Idle == 0 {
-		return srv.ListenAndServeTLS("", "")
+		group.Go(func() error { return srv.ListenAndServeTLS("", "") })
+	} else {
+		group.Go(func() error {
+			ln, err := net.Listen("tcp", srv.Addr)
+			if err != nil {
+				return err
+			}
+			defer ln.Close()
+			ln = tcpKeepAliveListener{d: args.Idle,
+				TCPListener: ln.(*net.TCPListener)}
+			return srv.ServeTLS(ln, "", "")
+		})
 	}
-	ln, err := net.Listen("tcp", srv.Addr)
-	if err != nil {
-		return err
-	}
-	defer ln.Close()
-	ln = tcpKeepAliveListener{d: args.Idle,
-		TCPListener: ln.(*net.TCPListener)}
-	return srv.ServeTLS(ln, "", "")
+	group.Go(func() error {
+		<-ctx.Done()
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		return srv.Shutdown(ctx)
+	})
+	return group.Wait()
 }
 
 func setupServer(addr, mapfile, cacheDir, email string, hsts bool) (*http.Server, http.Handler, error) {

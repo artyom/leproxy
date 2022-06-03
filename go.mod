@@ -3,6 +3,7 @@ module github.com/artyom/leproxy
 require (
 	github.com/artyom/autoflags v1.1.0
 	golang.org/x/crypto v0.0.0-20220126234351-aa10faf2a1f8
+	golang.org/x/sync v0.0.0-20220601150217-0de741cfad7f
 )
 
 require (
