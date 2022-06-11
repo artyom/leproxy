@@ -6,7 +6,7 @@ import (
 	"bufio"
 	"context"
 	"fmt"
-	"io/ioutil"
+	"io"
 	"log"
 	"net"
 	"net/http"
@@ -166,7 +166,7 @@ func setProxy(mapping map[string]string) (http.Handler, error) {
 			switch u.Scheme {
 			case "http", "https":
 				rp := newSingleHostReverseProxy(u)
-				rp.ErrorLog = log.New(ioutil.Discard, "", 0)
+				rp.ErrorLog = log.New(io.Discard, "", 0)
 				rp.BufferPool = bufPool{}
 				mux.Handle(hostname+"/", rp)
 				continue
@@ -183,7 +183,7 @@ func setProxy(mapping map[string]string) (http.Handler, error) {
 					return net.DialTimeout(network, backendAddr, 5*time.Second)
 				},
 			},
-			ErrorLog:   log.New(ioutil.Discard, "", 0),
+			ErrorLog:   log.New(io.Discard, "", 0),
 			BufferPool: bufPool{},
 		}
 		mux.Handle(hostname+"/", rp)
