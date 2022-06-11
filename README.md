@@ -3,7 +3,7 @@ usage for multiple hostnames/backends
 
 Install:
 
-	go get github.com/artyom/leproxy	
+	go install github.com/artyom/leproxy@latest
 
 Run:
 
