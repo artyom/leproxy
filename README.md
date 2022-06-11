@@ -7,16 +7,16 @@ Install:
 
 Run:
 
-	leproxy -addr :https -map /path/to/mapping.yml -cacheDir /path/to/letsencrypt
+	leproxy -addr :https -map /path/to/mapping.txt -cacheDir /path/to/letsencrypt
 
-`mapping.yml` contains host-to-backend mapping, where backend can be specified as:
+`mapping.txt` contains host-to-backend mapping, where backend can be specified as:
 
  * http/https url for http(s) connections to backend *without* passing "Host"
    header from request;
  * host:port for http over TCP connections to backend;
  * absolute path for http over unix socket connections;
  * @name for http over abstract unix socket connections (linux only);
- * absolute path with trailing slash to serve files from given directory.
+ * absolute path with a trailing slash to serve files from a given directory.
 
 Example:
 
@@ -24,6 +24,7 @@ Example:
 	subdomain2.example.com: /var/run/http.socket
 	subdomain3.example.com: @abstractUnixSocket
 	uploads.example.com: https://uploads-bucket.s3.amazonaws.com
+	# this is a comment, it can only start on a new line
 	static.example.com: /var/www/
 
 Note that when `@name` backend is specified, connection to abstract unix socket

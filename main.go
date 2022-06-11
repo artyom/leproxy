@@ -29,7 +29,7 @@ func main() {
 	args := runArgs{
 		Addr:  ":https",
 		HTTP:  ":http",
-		Conf:  "mapping.yml",
+		Conf:  "mapping.txt",
 		Cache: "/var/cache/letsencrypt",
 		RTo:   time.Minute,
 		WTo:   5 * time.Minute,
