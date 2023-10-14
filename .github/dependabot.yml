@@ -1,0 +1,13 @@
+version: 2
+updates:
+- package-ecosystem: gomod
+  directory: "/"
+  schedule:
+    interval: daily
+  open-pull-requests-limit: 10
+  assignees:
+  - artyom
+  ignore:
+  - dependency-name: github.com/artyom/autoflags
+    versions:
+    - "> 1.1.0"
